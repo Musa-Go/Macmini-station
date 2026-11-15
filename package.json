@@ -11,7 +11,7 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "doctor": "node bin/station.js doctor",
     "status": "node bin/station.js status",
     "plan": "node bin/station.js plan"
