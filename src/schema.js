@@ -8,6 +8,8 @@
 
 const BACKUP_TARGET_TYPES = ['local', 'external-disk', 'smb-restic', 's3-restic']
 const NOTIFICATION_PROVIDERS = ['none', 'qq', 'bark']
+// Credential references must look like references, never like raw secrets.
+const SECRET_LIKE = /^(sk-|oc_|ghp_|gho_|xox[baprs]-)|^[A-Za-z0-9_-]{32,}$/
 const REMOTE_PROVIDERS = ['tailscale']
 
 function isPlainObject(value) {
@@ -105,11 +107,66 @@ export function validateConfig(config) {
   else {
     requireBoolean(problems, remote.enabled, 'remoteAccess.enabled')
     requireEnum(problems, remote.provider, REMOTE_PROVIDERS, 'remoteAccess.provider')
+    if (remote.ports !== undefined) {
+      if (!Array.isArray(remote.ports)) push(problems, 'remoteAccess.ports', 'must be an array of port numbers')
+      else {
+        for (const port of remote.ports) {
+          if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            push(problems, 'remoteAccess.ports', 'each port must be an integer between 1 and 65535')
+          }
+        }
+        if (remote.enabled && remote.ports.length === 0) {
+          push(problems, 'remoteAccess.ports', 'must not be empty when remoteAccess.enabled is true')
+        }
+      }
+    }
   }
 
   const notifications = config.notifications
   if (!isPlainObject(notifications)) push(problems, 'notifications', 'must be an object')
-  else requireEnum(problems, notifications.primary, NOTIFICATION_PROVIDERS, 'notifications.primary')
+  else {
+    requireEnum(problems, notifications.primary, NOTIFICATION_PROVIDERS, 'notifications.primary')
+
+    if (notifications.fallback !== undefined && notifications.fallback !== null) {
+      requireEnum(problems, notifications.fallback, NOTIFICATION_PROVIDERS, 'notifications.fallback')
+      if (notifications.fallback === notifications.primary) {
+        push(problems, 'notifications.fallback', 'must differ from primary')
+      }
+    }
+
+    for (const name of ['qq', 'bark']) {
+      const connector = notifications[name]
+      if (connector === undefined) continue
+      if (!isPlainObject(connector)) {
+        push(problems, `notifications.${name}`, 'must be an object')
+        continue
+      }
+      if (connector.secretRef !== undefined) {
+        if (typeof connector.secretRef !== 'string' || connector.secretRef.trim() === '') {
+          push(problems, `notifications.${name}.secretRef`, 'must be a non-empty keychain reference')
+        } else if (SECRET_LIKE.test(connector.secretRef.trim())) {
+          push(problems, `notifications.${name}.secretRef`, 'looks like a raw secret; store it in the keychain and reference its name')
+        }
+      }
+    }
+
+    if (notifications.primary === 'qq') {
+      const qq = notifications.qq
+      if (!isPlainObject(qq)) push(problems, 'notifications.qq', 'required when primary is qq')
+      else {
+        requireString(problems, qq.appId, 'notifications.qq.appId')
+        requireString(problems, qq.secretRef, 'notifications.qq.secretRef')
+        if (!Array.isArray(qq.allowFrom) || qq.allowFrom.length === 0) {
+          push(problems, 'notifications.qq.allowFrom', 'must list at least one openid (otherwise anyone could send commands)')
+        }
+      }
+    }
+    if (notifications.primary === 'bark') {
+      const bark = notifications.bark
+      if (!isPlainObject(bark)) push(problems, 'notifications.bark', 'required when primary is bark')
+      else requireString(problems, bark.secretRef, 'notifications.bark.secretRef')
+    }
+  }
 
   const agent = config.agent
   if (!isPlainObject(agent)) push(problems, 'agent', 'must be an object')
