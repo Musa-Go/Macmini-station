@@ -188,7 +188,7 @@ function checkRemoteAccess({ config }) {
   }
 }
 
-const IMPLEMENTED_CONNECTORS = ['bark', 'qq']
+const IMPLEMENTED_CONNECTORS = ['bark', 'qq', 'feishu']
 
 function checkNotifications({ config }) {
   const notifications = config.notifications ?? {}

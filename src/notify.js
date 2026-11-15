@@ -27,6 +27,7 @@ import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { stateDir } from './state.js'
 import { deliverQQ, QQError } from './connectors/qq.js'
+import { sendFeishu } from './connectors/feishu.js'
 
 export const DEDUPE_WINDOW_MS = 5 * 60 * 1000
 export const RATE_LIMIT_PER_MIN = 20
@@ -34,7 +35,8 @@ export const MAX_CHUNK_BYTES = 1500
 // A single logical message must not turn into an unbounded burst of requests.
 export const MAX_CHUNKS_PER_MESSAGE = 10
 const BARK_ENDPOINT = 'https://api.day.app/push'
-const SUPPORTED_CONNECTORS = ['bark', 'qq']
+const SUPPORTED_CONNECTORS = ['bark', 'qq', 'feishu']
+const SECRET_REF_FIELD = { bark: 'secretRef', qq: 'secretRef', feishu: 'webhookRef' }
 
 export function stateFile(cwd) {
   return join(stateDir(cwd), 'notify-state.json')
@@ -188,8 +190,9 @@ export async function notify({
     return { ok: false, stage: 'connector', error: `${connector} delivery is not implemented yet` }
   }
 
-  const ref = notifications[connector]?.secretRef
-  if (!ref) return { ok: false, stage: 'config', error: `notifications.${connector}.secretRef is required` }
+  const refField = SECRET_REF_FIELD[connector]
+  const ref = notifications[connector]?.[refField]
+  if (!ref) return { ok: false, stage: 'config', error: `notifications.${connector}.${refField} is required` }
 
   const chunks = chunkBody(body)
   if (chunks.length > MAX_CHUNKS_PER_MESSAGE) {
@@ -234,6 +237,12 @@ export async function notify({
 
   const secretResult = readSecret({ ref })
   if (!secretResult.ok) {
+    // The reservation was taken before the secret lookup; release the dedupe slot
+    // so fixing the keychain lets the operator retry immediately.
+    mutateState(cwd, (state) => {
+      delete state.recent[key]
+      return { now: timestamp }
+    })
     audit(cwd, { timestamp, connector, status: 'secret-missing', title })
     return { ok: false, stage: 'secret', error: secretResult.error }
   }
@@ -258,6 +267,17 @@ export async function notify({
       if (connector === 'bark') {
         const result = await sendBark({ secret: secretResult.secret, title, body: chunk, fetchImpl })
         if (!result.ok) throw Object.assign(new Error(result.error ?? `HTTP ${result.status}`), { stage: 'transport', status: result.status })
+      } else if (connector === 'feishu') {
+        // The webhook URL is the credential; 加签 needs a second keychain entry.
+        const signRef = notifications.feishu?.signSecretRef
+        let signSecret = null
+        if (typeof signRef === 'string' && signRef.trim() !== '') {
+          const signResult = readSecret({ ref: signRef.trim() })
+          if (!signResult.ok) throw Object.assign(new Error(signResult.error), { stage: 'secret' })
+          signSecret = signResult.secret
+        }
+        const result = await sendFeishu({ webhookUrl: secretResult.secret.trim(), signSecret, title, body: chunk, fetchImpl })
+        if (!result.ok) throw Object.assign(new Error(result.error ?? 'feishu send failed'), { stage: result.stage ?? 'transport', status: result.status ?? null })
       } else {
         await deliverQQ({ config, secret: secretResult.secret, content: `${title}\n${chunk}`.trim(), fetchImpl })
       }

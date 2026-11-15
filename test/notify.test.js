@@ -349,3 +349,84 @@ test('the audit log keeps a title hash instead of the raw title', () => {
     })
     .finally(() => s.cleanup())
 })
+
+test('notify delivers through feishu with the keychain webhook and optional sign secret', async () => {
+  const s = sandbox({ primary: 'feishu' })
+  try {
+    const config = {
+      ...s.config,
+      notifications: { primary: 'feishu', feishu: { webhookRef: 'station.feishu.webhook', signSecretRef: 'station.feishu.sign' } },
+    }
+    const calls = []
+    const fetch = async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) })
+      return { ok: true, status: 200, json: async () => ({ code: 0 }) }
+    }
+    const secrets = { 'station.feishu.webhook': 'https://open.feishu.cn/open-apis/bot/v2/hook/tok', 'station.feishu.sign': 'sign-secret' }
+    const result = await notify({
+      cwd: s.dir,
+      config,
+      title: 'hello',
+      body: 'world',
+      deps: { fetchImpl: fetch, readSecret: ({ ref }) => ({ ok: true, secret: secrets[ref] }) },
+    })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].body.msg_type, 'text')
+    assert.equal(calls[0].body.content.text, 'hello\nworld')
+    assert.ok(typeof calls[0].body.sign === 'string', '加签 should be applied when signSecretRef is set')
+    const audit = readFileSync(auditFile(s.dir), 'utf8')
+    assert.ok(!audit.includes('sign-secret'), 'audit must not contain the sign secret')
+    assert.ok(!audit.includes('/hook/tok'), 'audit must not contain the webhook token')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('notify reports a feishu rejection instead of claiming success', async () => {
+  const s = sandbox({ primary: 'feishu' })
+  try {
+    const config = { ...s.config, notifications: { primary: 'feishu', feishu: { webhookRef: 'station.feishu.webhook' } } }
+    const result = await notify({
+      cwd: s.dir,
+      config,
+      title: 't',
+      body: 'b',
+      deps: {
+        readSecret: () => ({ ok: true, secret: 'https://open.feishu.cn/open-apis/bot/v2/hook/tok' }),
+        fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ code: 19021, msg: 'bad' }) }),
+      },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.stage, 'rejected')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('a missing keychain entry does not block an immediate retry', async () => {
+  const s = sandbox()
+  try {
+    const first = await notify({
+      cwd: s.dir,
+      config: s.config,
+      title: 'retry me',
+      body: 'body',
+      deps: { readSecret: () => ({ ok: false, error: 'keychain entry missing' }), fetchImpl: fakeFetch() },
+    })
+    assert.equal(first.stage, 'secret')
+
+    const fetch = fakeFetch()
+    const second = await notify({
+      cwd: s.dir,
+      config: s.config,
+      title: 'retry me',
+      body: 'body',
+      deps: { readSecret: okSecret, fetchImpl: fetch },
+    })
+    assert.equal(second.ok, true, JSON.stringify(second))
+    assert.equal(fetch.calls.length, 1, 'the retry must actually send')
+  } finally {
+    s.cleanup()
+  }
+})

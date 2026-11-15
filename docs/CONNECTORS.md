@@ -11,6 +11,7 @@
 | `tailscale` | 入站 | 把选定端口发布到 tailnet，供自己的设备访问 | 本机已安装并登录 Tailscale |
 | `qq` | 双向 | 接收指令、推送告警与日报 | 官方 QQ 开放平台机器人 AppID/AppSecret |
 | `bark` | 出站 | 兜底推送（QQ 不可用时仍能收到告警） | Bark 设备 key |
+| `feishu` | 出站 | 团队/个人群里的通知（支持加签） | 自定义机器人 webhook URL（+ 加签 secret） |
 
 三者**全部 opt-in**：默认 `notifications.primary: "none"`、`remoteAccess.enabled: false`，未配置时核心功能完整可用。
 
@@ -25,6 +26,7 @@
 | `tailscale` | 无（读本机 `tailscale status`） | Tailscale 自己的登录态 |
 | `qq` | `appId`（非机密）+ **凭据引用名** | 系统钥匙串条目 |
 | `bark` | **凭据引用名** | 系统钥匙串条目 |
+| `feishu` | `webhookRef` + `signSecretRef`（引用名） | 钥匙串里存完整 webhook URL 与加签 secret |
 
 引用形如 `"secretRef": "station.qq.appSecret"`。运行时通过系统钥匙串读取：
 

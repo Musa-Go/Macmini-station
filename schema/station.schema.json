@@ -190,14 +190,16 @@
           "enum": [
             "none",
             "qq",
-            "bark"
+            "bark",
+            "feishu"
           ]
         },
         "fallback": {
           "enum": [
             "none",
             "qq",
-            "bark"
+            "bark",
+            "feishu"
           ]
         },
         "qq": {
@@ -246,6 +248,23 @@
             "enabled": {
               "type": "boolean",
               "description": "defaults to false"
+            }
+          }
+        },
+        "feishu": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Feishu/Lark custom bot. The webhook URL is a credential and lives in the keychain.",
+          "properties": {
+            "webhookRef": {
+              "type": "string",
+              "minLength": 1,
+              "description": "keychain entry holding the full webhook URL"
+            },
+            "signSecretRef": {
+              "type": "string",
+              "minLength": 1,
+              "description": "keychain entry holding the 加签 secret, if enabled"
             }
           }
         }
