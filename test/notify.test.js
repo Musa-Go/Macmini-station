@@ -74,14 +74,54 @@ test('notify refuses when the primary connector is none', async () => {
   }
 })
 
-test('notify refuses an unimplemented connector instead of silently succeeding', async () => {
+test('notify fails closed when the qq block is incomplete', async () => {
   const s = sandbox({ primary: 'qq' })
   try {
+    // secretRef present but appId missing: must never reach the network.
     const config = { ...s.config, notifications: { primary: 'qq', qq: { secretRef: 'station.qq.appSecret' } } }
-    const result = await notify({ cwd: s.dir, config, title: 't', body: 'b' })
+    const fetch = fakeFetch()
+    const result = await notify({
+      cwd: s.dir,
+      config,
+      title: 't',
+      body: 'b',
+      deps: { fetchImpl: fetch, readSecret: okSecret },
+    })
     assert.equal(result.ok, false)
-    assert.equal(result.stage, 'connector')
-    assert.match(result.error, /not implemented/)
+    assert.equal(result.stage, 'config')
+    assert.match(result.error, /appId/)
+    assert.equal(fetch.calls.length, 0)
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('notify delivers through qq: token first, then the C2C message', async () => {
+  const s = sandbox({ primary: 'qq' })
+  try {
+    const calls = []
+    const fetch = async (url, init) => {
+      calls.push({ url, init })
+      if (url.includes('getAppAccessToken')) return { ok: true, status: 200, json: async () => ({ access_token: 'tok-123', expires_in: 7200 }) }
+      return { ok: true, status: 200, json: async () => ({ id: 'msg-1' }) }
+    }
+    const config = {
+      ...s.config,
+      notifications: {
+        primary: 'qq',
+        qq: { appId: '102880683', secretRef: 'station.qq.appSecret', allowFrom: ['openid-abc'] },
+      },
+    }
+    const result = await notify({ cwd: s.dir, config, title: 'hello', body: 'world', deps: { fetchImpl: fetch, readSecret: okSecret } })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(calls.length, 2)
+    assert.match(calls[0].url, /getAppAccessToken/)
+    assert.deepEqual(JSON.parse(calls[0].init.body), { appId: '102880683', clientSecret: SECRET })
+    assert.match(calls[1].url, /\/v2\/users\/openid-abc\/messages/)
+    assert.equal(calls[1].init.headers.authorization, 'QQBot tok-123')
+    assert.match(JSON.parse(calls[1].init.body).content, /hello/)
+    assert.ok(!readFileSync(auditFile(s.dir), 'utf8').includes(SECRET))
+    assert.ok(!readFileSync(auditFile(s.dir), 'utf8').includes('tok-123'), 'audit must not contain the bearer token')
   } finally {
     s.cleanup()
   }
