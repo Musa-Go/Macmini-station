@@ -9,9 +9,12 @@ import {
   chunkBody,
   describeNotify,
   DEDUPE_WINDOW_MS,
+  MAX_CHUNK_BYTES,
+  MAX_CHUNKS_PER_MESSAGE,
   messageKey,
   notify,
   readKeychain,
+  stateFile,
 } from '../src/notify.js'
 
 const SECRET = 'bark-device-key-do-not-log'
@@ -295,4 +298,54 @@ test('describeNotify summarises each outcome', () => {
   assert.match(describeNotify({ ok: true, deduped: true }), /deduplicated/)
   assert.match(describeNotify({ ok: true, connector: 'bark', chunks: 2 }), /sent via bark/)
   assert.match(describeNotify({ ok: false, stage: 'secret', error: 'x' }), /failed at secret/)
+})
+test('a message that needs too many chunks is refused before sending', async () => {
+  const s = sandbox()
+  try {
+    const fetch = fakeFetch()
+    const result = await notify({
+      cwd: s.dir,
+      config: s.config,
+      title: 'huge',
+      body: 'z'.repeat(MAX_CHUNK_BYTES * (MAX_CHUNKS_PER_MESSAGE + 2)),
+      deps: { fetchImpl: fetch, readSecret: okSecret },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.stage, 'too-large')
+    assert.equal(fetch.calls.length, 0)
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('a failed send keeps the request budget charged but allows an immediate retry', async () => {
+  const s = sandbox()
+  try {
+    const failing = fakeFetch({ ok: false, status: 500 })
+    const first = await notify({ cwd: s.dir, config: s.config, title: 't', body: 'b', deps: { fetchImpl: failing, readSecret: okSecret } })
+    assert.equal(first.ok, false)
+
+    const state = JSON.parse(readFileSync(stateFile(s.dir), 'utf8'))
+    assert.ok(state.windowCount >= 1, 'a failed attempt must still count against the minute budget')
+    assert.equal(Object.keys(state.recent).length, 0, 'a failed message must not be deduplicated')
+
+    const ok = fakeFetch()
+    const retry = await notify({ cwd: s.dir, config: s.config, title: 't', body: 'b', deps: { fetchImpl: ok, readSecret: okSecret } })
+    assert.equal(retry.ok, true)
+    assert.equal(ok.calls.length, 1)
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('the audit log keeps a title hash instead of the raw title', () => {
+  const s = sandbox()
+  return notify({ cwd: s.dir, config: s.config, title: 'secret project alpha', body: 'b', deps: { fetchImpl: fakeFetch(), readSecret: okSecret } })
+    .then(() => {
+      const log = readFileSync(auditFile(s.dir), 'utf8')
+      assert.ok(!log.includes('secret project alpha'), 'raw title must not be persisted')
+      const record = JSON.parse(log.trim().split('\n').at(-1))
+      assert.match(record.titleHash, /^[0-9a-f]{12}$/)
+    })
+    .finally(() => s.cleanup())
 })

@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultConfig, configPath } from '../src/config.js'
-import { backup, check, findRestic, restore, resolveSources, resolveTarget } from '../src/backup.js'
+import { backup, check, checkPasswordFile, findRestic, restore, resolveSources, resolveTarget } from '../src/backup.js'
 
 /**
  * These tests never call a real restic. A stub shell script stands in for it and
@@ -33,6 +33,7 @@ exit 0
 
   const passwordFile = join(dir, 'restic.pass')
   writeFileSync(passwordFile, 'test-password')
+  chmodSync(passwordFile, 0o600)
 
   const config = defaultConfig()
   config.storage.backup.target = { type: 'local', path: join(dir, 'backups') }
@@ -220,4 +221,45 @@ test('the real restic detection path never downloads anything', () => {
   // Installed or not, the contract is the same: no network, no bundled binary.
   assert.equal(typeof result.ok, 'boolean')
   if (!result.ok) assert.ok(result.hint, 'must tell the user how to install restic')
+})
+test('an unimplemented target type fails closed instead of writing locally', () => {
+  const s = sandbox()
+  try {
+    const config = JSON.parse(JSON.stringify(s.config))
+    config.storage.backup.target = { type: 's3-restic', path: join(s.dir, 's3') }
+    const result = resolveTarget(config)
+    assert.equal(result.ok, false)
+    assert.match(result.error, /not implemented/)
+
+    const run = backup({ cwd: s.dir, config, env: s.env })
+    assert.equal(run.ok, false)
+    assert.equal(run.stage, 'target')
+    assert.equal(existsSync(join(s.dir, 's3')), false, 'nothing may be written for an unsupported target')
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('a world-readable password file is rejected', () => {
+  const s = sandbox()
+  try {
+    chmodSync(s.passwordFile, 0o644)
+    const result = backup({ cwd: s.dir, config: s.config, env: s.env })
+    assert.equal(result.ok, false)
+    assert.equal(result.stage, 'password')
+    assert.match(result.error, /readable by other users/)
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('a password path pointing at a directory is rejected', () => {
+  const s = sandbox()
+  try {
+    const result = checkPasswordFile(s.dir)
+    assert.equal(result.ok, false)
+    assert.match(result.error, /regular file/)
+  } finally {
+    s.cleanup()
+  }
 })

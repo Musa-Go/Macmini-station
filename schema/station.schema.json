@@ -153,7 +153,31 @@
             "maximum": 65535
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "ports"
+            ],
+            "properties": {
+              "ports": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "notifications": {
       "type": "object",
@@ -195,6 +219,11 @@
                 "type": "string",
                 "minLength": 1
               }
+            },
+            "to": {
+              "type": "string",
+              "minLength": 1,
+              "description": "explicit recipient openid; defaults to the first allowFrom entry"
             }
           }
         },
@@ -251,6 +280,21 @@
             "minLength": 1
           },
           "description": "argv template executed by `worktree agent`; supports {prompt} and {worktree}"
+        },
+        "gate": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "test gate that must pass before commit/push",
+          "properties": {
+            "task": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": {
+              "type": "boolean",
+              "description": "defaults to true"
+            }
+          }
         }
       }
     },

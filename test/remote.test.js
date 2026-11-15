@@ -6,9 +6,14 @@ import {
   describeExpose,
   expose,
   findTailscale,
+  readPublished,
   serveCommands,
   tailnetOnline,
+  writePublished,
 } from '../src/remote.js'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 function configured({ enabled = true, ports = [8443, 8444] } = {}) {
   const config = defaultConfig()
@@ -108,4 +113,45 @@ test('describeExpose summarises dry runs and failures', () => {
 
 test('candidate list is absolute paths so nothing resolves from PATH order', () => {
   for (const candidate of TAILSCALE_CANDIDATES) assert.ok(candidate.startsWith('/') || candidate === 'tailscale')
+})
+test('--off works after remote access is disabled', () => {
+  const probe = scriptedProbe()
+  const dir = mkdtempSync(join(tmpdir(), 'station-expose-'))
+  try {
+    writePublished({ cwd: dir, ports: [8443] })
+    const result = expose({ cwd: dir, config: configured({ enabled: false }), off: true, probe })
+    if (result.stage === 'tailscale') return // host without Tailscale
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.deepEqual(result.ports, [8443])
+    assert.deepEqual(readPublished({ cwd: dir }), [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('ports removed from the config are unpublished on the next run', () => {
+  const probe = scriptedProbe()
+  const dir = mkdtempSync(join(tmpdir(), 'station-expose-'))
+  try {
+    writePublished({ cwd: dir, ports: [8443, 8444] })
+    const result = expose({ cwd: dir, config: configured({ ports: [8443] }), probe })
+    if (result.stage === 'tailscale') return
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.deepEqual(result.results.map((item) => `${item.action}:${item.port}`), ['off:8444', 'serve:8443'])
+    assert.deepEqual(readPublished({ cwd: dir }), [8443])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('off with nothing recorded is a no-op success', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'station-expose-'))
+  try {
+    const result = expose({ cwd: dir, config: configured({ enabled: false }), off: true, probe: scriptedProbe() })
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.ports, [])
+    assert.match(result.note, /nothing to unpublish/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -16,10 +16,12 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { jobsDir } from './worktree.js'
+import { gateTaskName, jobsDir, worktreeFingerprint, updateJobRecord } from './worktree.js'
 
 export const DEFAULT_TASK_TIMEOUT_SECONDS = 600
 export const MAX_OUTPUT_TAIL_BYTES = 8000
+// Hard ceiling on what a single run may hold in memory or write to its log.
+export const MAX_CAPTURE_BYTES = 1024 * 1024
 
 export function allowedTasks(config) {
   const tasks = config.agent?.tasks
@@ -75,7 +77,8 @@ export function runProcess({
 
   mkdirSync(runDir(cwd, job.id), { recursive: true })
   const logPath = taskLogPath(cwd, job.id, label)
-  writeFileSync(logPath, `$ ${argv.join(' ')}\n# cwd: ${worktree}\n\n`)
+  const displayArgv = record.displayArgv ?? argv
+  writeFileSync(logPath, `$ ${displayArgv.join(' ')}\n# cwd: ${worktree}\n\n`)
 
   return new Promise((resolve) => {
     const startedAt = Date.now()
@@ -87,9 +90,25 @@ export function runProcess({
     })
 
     let output = ''
+    let loggedBytes = 0
+    let logTruncated = false
     const collect = (chunk) => {
       const text = String(chunk)
       output += text
+      if (output.length > MAX_CAPTURE_BYTES * 2) {
+        // Keep a bounded window; tailBytes only needs the end of the stream.
+        output = output.slice(-MAX_CAPTURE_BYTES)
+      }
+      if (logTruncated) return
+      const bytes = Buffer.byteLength(text, 'utf8')
+      if (loggedBytes + bytes > MAX_CAPTURE_BYTES) {
+        logTruncated = true
+        try {
+          appendFileSync(logPath, '\n…(log truncated at 1 MiB; later output was dropped)\n')
+        } catch {}
+        return
+      }
+      loggedBytes += bytes
       try {
         appendFileSync(logPath, text)
       } catch {
@@ -118,7 +137,7 @@ export function runProcess({
         jobId: job.id,
         kind: record.kind ?? label,
         label,
-        argv,
+        argv: displayArgv,
         exitCode: timedOut || spawnError ? null : code,
         signal: signal ?? null,
         timedOut,
@@ -170,6 +189,31 @@ export function runTask({ cwd, job, task, config, timeoutMs, env = process.env, 
     env,
     spawnImpl,
     record: { kind: 'task', extra: { task } },
+  }).then((result) => {
+    // A passing gate run is recorded against the exact tree content it tested,
+    // so publishing can require that same content rather than a vague promise.
+    if (gateTaskName(config) === task) {
+      try {
+        updateJobRecord({
+          cwd,
+          id: job.id,
+          patch: {
+            gate: {
+              task,
+              ok: result.ok,
+              exitCode: result.exitCode,
+              timedOut: result.timedOut,
+              fingerprint: worktreeFingerprint({ path: job.path }),
+              at: new Date().toISOString(),
+            },
+          },
+        })
+      } catch {
+        // Recording failure must not change the run result, but publishing will
+        // then refuse because no gate is on record.
+      }
+    }
+    return result
   })
 }
 
@@ -198,7 +242,12 @@ export async function runAgent({ cwd, job, prompt, config, timeoutMs, env = proc
     timeoutMs: timeoutMs ?? Math.max(1, seconds) * 1000,
     env,
     spawnImpl,
-    record: { kind: 'agent', extra: { promptLength: prompt.length } },
+    record: {
+      kind: 'agent',
+      // Never persist the prompt itself: it can contain private context.
+      displayArgv: argv.map((part) => (part.includes(prompt) ? part.replaceAll(prompt, `<prompt:${prompt.length} chars>`) : part)),
+      extra: { promptLength: prompt.length },
+    },
   })
 }
 

@@ -6,7 +6,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultConfig, configPath } from '../src/config.js'
 import { createWorktree } from '../src/worktree.js'
-import { allowedTasks, describeRun, readRuns, runTask, tailBytes, taskLogPath } from '../src/jobrun.js'
+import {
+  MAX_CAPTURE_BYTES,
+  allowedTasks,
+  describeRun,
+  readRuns,
+  runAgent,
+  runTask,
+  tailBytes,
+  taskLogPath,
+} from '../src/jobrun.js'
 
 function git(cwd, args) {
   return execFileSync('/usr/bin/git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim()
@@ -163,6 +172,36 @@ test('taskLogPath lives under .station/jobs/<id>', () => {
     const path = taskLogPath(s.station, s.job.id, 'test')
     assert.ok(path.includes(join('.station', 'jobs', s.job.id)))
     assert.match(path, /test-.*\.log$/)
+  } finally {
+    s.cleanup()
+  }
+})
+test('a very chatty task is capped in memory and in its log', async () => {
+  const s = sandbox({ noisy: ['node', '-e', 'process.stdout.write("x".repeat(3*1024*1024))'] })
+  try {
+    const result = await runTask({ cwd: s.station, job: s.job, task: 'noisy', config: s.config, timeoutMs: 20_000 })
+    assert.equal(result.ok, true)
+    assert.ok(result.outputTail.length <= 9000, `tail should stay bounded, got ${result.outputTail.length}`)
+    const log = readFileSync(result.logPath, 'utf8')
+    // Cap plus the command header and the truncation marker.
+    assert.ok(log.length <= MAX_CAPTURE_BYTES + 1024, `log file must be capped, got ${log.length}`)
+    assert.match(log, /log truncated/)
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('an agent prompt is never written to the run record', async () => {
+  const s = sandbox({})
+  try {
+    const config = { ...s.config, agent: { ...s.config.agent, command: ['node', '-e', 'console.log(process.argv[1])', '{prompt}'] } }
+    const secretish = 'please paste the production token'
+    const result = await runAgent({ cwd: s.station, job: s.job, prompt: secretish, config })
+    assert.equal(result.ok, true)
+    const runs = readRuns(s.station, s.job.id)
+    const record = runs.at(-1)
+    assert.ok(!JSON.stringify(record).includes(secretish), 'prompt must not be persisted in runs.jsonl')
+    assert.match(JSON.stringify(record), /<prompt:/)
   } finally {
     s.cleanup()
   }

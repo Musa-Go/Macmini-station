@@ -11,6 +11,48 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { assertTrustedJob, gateConfig, readJobRecord, updateJobRecord, worktreeFingerprint } from './worktree.js'
+
+/** Quote a value for safe copy-paste into a POSIX shell. */
+export function shellQuote(value) {
+  const text = String(value ?? '')
+  if (/^[A-Za-z0-9_\-./:=@%+]+$/.test(text)) return text
+  return `'${text.replaceAll("'", `'\\''`)}'`
+}
+
+function formatCommand(argv) {
+  return argv.map(shellQuote).join(' ')
+}
+
+/**
+ * Refuse to publish unless a passing gate run covers the exact working tree we
+ * are about to commit. The record is re-read from disk (not trusted from the
+ * caller) and tied to a content fingerprint.
+ */
+export function assertGate({ cwd, job, config, fingerprint }) {
+  const gateSettings = gateConfig(config)
+  const task = gateSettings.task
+  if (!task) {
+    if (gateSettings.required) {
+      throw new Error('agent.gate.required is true but agent.gate.task is not set')
+    }
+    return { enforced: false, reason: 'no test gate configured (agent.gate.task); this commit is untested' }
+  }
+  const record = readJobRecord({ cwd, id: job.id })
+  if (!record) throw new Error(`no trusted job record for ${job.id}`)
+  const gate = record.gate
+  if (!gate || gate.task !== task) {
+    throw new Error(`run the gate task first: station worktree run ${job.id} --task ${task}`)
+  }
+  if (!gate.ok) {
+    throw new Error(`gate task "${task}" did not pass (exit ${gate.exitCode ?? 'n/a'}); fix it before publishing`)
+  }
+  const current = fingerprint ?? worktreeFingerprint({ path: job.path })
+  if (gate.fingerprint !== current) {
+    throw new Error(`the working tree changed since the gate run; re-run: station worktree run ${job.id} --task ${task}`)
+  }
+  return { enforced: true, task, fingerprint: current }
+}
 
 export function jobBranchPattern(branch) {
   return typeof branch === 'string' && branch.startsWith('station/job-')
@@ -32,15 +74,19 @@ function git(cwd, args, { allowFailure = false, env } = {}) {
   }
 }
 
-export function commitJob({ job, message, env, gitImpl = git }) {
+export function commitJob({ cwd, job, message, config = {}, env, gitImpl = git, trust = assertTrustedJob }) {
   if (!jobBranchPattern(job.branch)) throw new Error(`refusing to commit on a non-job branch: ${job.branch}`)
   if (typeof message !== 'string' || message.trim() === '') throw new Error('a commit message is required')
+  const trusted = trust({ cwd, job, gitImpl })
+  const fingerprint = worktreeFingerprint({ path: trusted.path, gitImpl })
+  const gate = assertGate({ cwd, job: trusted, config, fingerprint })
+  const jobRef = trusted
 
-  const status = gitImpl(job.path, ['status', '--porcelain'])
+  const status = gitImpl(jobRef.path, ['status', '--porcelain'])
   if (status.stdout === '') return { ok: true, committed: false, detail: 'nothing to commit' }
 
-  gitImpl(job.path, ['add', '-A'])
-  const result = gitImpl(job.path, [
+  gitImpl(jobRef.path, ['add', '-A'])
+  const result = gitImpl(jobRef.path, [
     '-c',
     'user.name=macmini-station',
     '-c',
@@ -50,21 +96,47 @@ export function commitJob({ job, message, env, gitImpl = git }) {
     '-m',
     message.trim(),
   ], { env })
-  const head = gitImpl(job.path, ['rev-parse', 'HEAD']).stdout
-  return { ok: true, committed: true, commit: head, branch: job.branch }
+  const head = gitImpl(jobRef.path, ['rev-parse', 'HEAD']).stdout
+  try {
+    // Remember which commit the gate covered, so a later push can detect that the
+    // branch moved after the tests passed.
+    updateJobRecord({ cwd, id: jobRef.id, patch: { gateCommit: head, committedAt: new Date().toISOString() } })
+  } catch {
+    // Publishing still succeeds; push will then refuse because no gateCommit exists.
+  }
+  return { ok: true, committed: true, commit: head, branch: jobRef.branch, gate }
 }
 
-export function pushJob({ job, remote = 'origin', env, gitImpl = git }) {
+export function pushJob({ cwd, job, remote = 'origin', config = {}, env, gitImpl = git, trust = assertTrustedJob }) {
   if (!jobBranchPattern(job.branch)) throw new Error(`refusing to push a non-job branch: ${job.branch}`)
+  const trusted = trust({ cwd, job, gitImpl })
+  const gateSettings = gateConfig(config)
+  if (gateSettings.task && gateSettings.required) {
+    const gateTask = gateSettings.task
+    const record = readJobRecord({ cwd, id: trusted.id })
+    const gate = record?.gate
+    const head = gitImpl(trusted.path, ['rev-parse', 'HEAD']).stdout
+    if (!gate || !gate.ok) {
+      throw new Error(`gate task "${gateTask}" has not passed; run it before pushing`)
+    }
+    const dirty = gitImpl(trusted.path, ['status', '--porcelain'], { allowFailure: true })
+    if (dirty.ok && dirty.stdout !== '') {
+      throw new Error('the worktree has uncommitted changes; commit or discard them before pushing')
+    }
+    const committedGate = record.gateCommit
+    if (committedGate && committedGate !== head) {
+      throw new Error(`the branch moved since the gate passed (${committedGate.slice(0, 8)} → ${head.slice(0, 8)}); re-run the gate`)
+    }
+  }
 
-  const hasRemote = gitImpl(job.repo, ['remote'], { allowFailure: true })
+  const hasRemote = gitImpl(trusted.repo, ['remote'], { allowFailure: true })
   if (!hasRemote.ok || !hasRemote.stdout.split('\n').map((line) => line.trim()).includes(remote)) {
     return { ok: false, stage: 'remote', error: `repository has no remote named ${remote}` }
   }
 
-  const result = gitImpl(job.path, ['push', '-u', remote, job.branch], { allowFailure: true, env })
+  const result = gitImpl(trusted.path, ['push', '-u', remote, trusted.branch], { allowFailure: true, env })
   if (!result.ok) return { ok: false, stage: 'push', error: result.error ?? 'git push failed' }
-  return { ok: true, branch: job.branch, remote, output: result.stdout.split('\n').slice(-2).join(' ') }
+  return { ok: true, branch: trusted.branch, remote, output: result.stdout.split('\n').slice(-2).join(' ') }
 }
 
 function findCommand(command) {
@@ -93,19 +165,20 @@ export function prCommand({ job, title, body, base = 'main' }) {
   ]
 }
 
-export function openDraftPr({ job, title, body, base = 'main', exec = execFileSync, find = findCommand }) {
+export function openDraftPr({ cwd, job, title, body, base = 'main', exec = execFileSync, find = findCommand, trust = assertTrustedJob, gitImpl = git }) {
   if (!jobBranchPattern(job.branch)) throw new Error(`refusing to open a PR for a non-job branch: ${job.branch}`)
+  const trusted = trust({ cwd, job, gitImpl })
   const gh = find('gh')
   if (!gh) {
     return {
       ok: false,
       stage: 'gh',
       error: 'gh CLI not found; install it or run the printed command yourself',
-      command: prCommand({ job, title, body, base }).join(' '),
+      command: formatCommand(prCommand({ job: trusted, title, body, base })),
     }
   }
   if (typeof title !== 'string' || title.trim() === '') throw new Error('a PR title is required')
-  const args = ['pr', 'create', '--draft', '--base', base, '--head', job.branch, '--title', title, '--body', body ?? '']
+  const args = ['pr', 'create', '--draft', '--base', base, '--head', trusted.branch, '--title', title, '--body', body ?? '']
   try {
     const stdout = exec(gh, args, { encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] })
     return { ok: true, url: String(stdout).trim().split('\n').pop(), draft: true }

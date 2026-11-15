@@ -70,6 +70,17 @@ jobs:
           "
           backupShape=$?
 
+          # notify with the default primary=none must fail closed and say why.
+          node bin/station.js notify --title t --body b --json > notify.json
+          notify=$?
+          echo "notify exit=$notify"
+          node -e "
+            const n = require('./notify.json');
+            if (n.ok !== false) process.exit(1);
+            if (typeof n.stage !== 'string') process.exit(1);
+          "
+          notifyShape=$?
+
           if [ "$doctor" -gt 1 ] || [ "$plan" -gt 1 ] || [ "$shape" -ne 0 ] || [ "$backupShape" -ne 0 ] || [ "$notifyShape" -ne 0 ]; then
             echo "unexpected exit code: doctor=$doctor plan=$plan shape=$shape backupShape=$backupShape notifyShape=$notifyShape"
             exit 1
@@ -82,14 +93,3 @@ jobs:
             echo "backup must exit 0 (restic present) or 2 (fail closed), got $backup"
             exit 1
           fi
-
-          # notify with the default primary=none must fail closed and say why.
-          node bin/station.js notify --title t --body b --json > notify.json
-          notify=$?
-          echo "notify exit=$notify"
-          node -e "
-            const n = require('./notify.json');
-            if (n.ok !== false) process.exit(1);
-            if (typeof n.stage !== 'string') process.exit(1);
-          "
-          notifyShape=$?

@@ -152,3 +152,41 @@ test('schema rejects duplicate capability ids', () => {
   config.capabilities.enabled = ['a', 'a']
   assert.ok(validateConfig(config).some((p) => p.message.includes('duplicate')))
 })
+test('remote access requires a non-empty port list when enabled', () => {
+  const missing = defaultConfig()
+  missing.remoteAccess = { enabled: true, provider: 'tailscale' }
+  assert.ok(validateConfig(missing).some((p) => p.path === 'remoteAccess.ports'))
+
+  const empty = defaultConfig()
+  empty.remoteAccess = { enabled: true, provider: 'tailscale', ports: [] }
+  assert.ok(validateConfig(empty).some((p) => p.path === 'remoteAccess.ports'))
+})
+
+test('agent.gate must name a configured task', () => {
+  const config = defaultConfig()
+  config.agent.tasks = { test: ['npm', 'test'] }
+  config.agent.gate = { task: 'test' }
+  assert.deepEqual(validateConfig(config), [])
+
+  config.agent.gate = { task: 'missing' }
+  assert.ok(validateConfig(config).some((p) => p.path === 'agent.gate.task'))
+
+  config.agent.gate = { task: 'test', required: 'yes' }
+  assert.ok(validateConfig(config).some((p) => p.path === 'agent.gate.required'))
+})
+
+test('notifications.qq.to is accepted and allowFrom entries must be real strings', () => {
+  const config = defaultConfig()
+  config.notifications = {
+    primary: 'qq',
+    qq: { appId: '102', secretRef: 'station.qq.appSecret', allowFrom: ['openid-1'], to: 'openid-2' },
+  }
+  assert.deepEqual(validateConfig(config), [])
+
+  config.notifications.qq.to = ''
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.qq.to'))
+
+  config.notifications.qq.to = 'openid-2'
+  config.notifications.qq.allowFrom = ['']
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.qq.allowFrom'))
+})

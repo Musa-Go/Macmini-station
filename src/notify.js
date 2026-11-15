@@ -11,7 +11,17 @@
  * Everything is injectable so tests run offline and with a fake clock.
  */
 
-import { existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -21,6 +31,8 @@ import { deliverQQ, QQError } from './connectors/qq.js'
 export const DEDUPE_WINDOW_MS = 5 * 60 * 1000
 export const RATE_LIMIT_PER_MIN = 20
 export const MAX_CHUNK_BYTES = 1500
+// A single logical message must not turn into an unbounded burst of requests.
+export const MAX_CHUNKS_PER_MESSAGE = 10
 const BARK_ENDPOINT = 'https://api.day.app/push'
 const SUPPORTED_CONNECTORS = ['bark', 'qq']
 
@@ -30,6 +42,47 @@ export function stateFile(cwd) {
 
 export function auditFile(cwd) {
   return join(stateDir(cwd), 'notify.log')
+}
+
+/** Cross-process lock so concurrent CLI runs cannot overspend the rate limit. */
+export function withStateLock(cwd, fn, { retries = 100, waitMs = 25, staleMs = 60_000 } = {}) {
+  const path = join(stateDir(cwd), '.notify.lock')
+  mkdirSync(stateDir(cwd), { recursive: true })
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      const fd = openSync(path, 'wx', 0o600)
+      try {
+        return fn()
+      } finally {
+        closeSync(fd)
+        try {
+          unlinkSync(path)
+        } catch {}
+      }
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      // A killed process can leave the lock behind; only break it when it is old.
+      try {
+        const age = Date.now() - statSync(path).mtimeMs
+        if (age > staleMs) unlinkSync(path)
+      } catch {}
+      const until = Date.now() + waitMs
+      while (Date.now() < until) {
+        /* short spin: the critical section is a couple of file writes */
+      }
+    }
+  }
+  throw new Error('could not acquire the notification state lock; is another station process running?')
+}
+
+/** Locked read-modify-write of the dedupe / rate-limit state. */
+function mutateState(cwd, mutate) {
+  return withStateLock(cwd, () => {
+    const state = readState(cwd)
+    const result = mutate(state)
+    writeState(cwd, state, result?.now ?? Date.now())
+    return result
+  })
 }
 
 function readState(cwd) {
@@ -139,22 +192,44 @@ export async function notify({
   if (!ref) return { ok: false, stage: 'config', error: `notifications.${connector}.secretRef is required` }
 
   const chunks = chunkBody(body)
+  if (chunks.length > MAX_CHUNKS_PER_MESSAGE) {
+    return {
+      ok: false,
+      stage: 'too-large',
+      error: `message needs ${chunks.length} chunks but the limit is ${MAX_CHUNKS_PER_MESSAGE}`,
+    }
+  }
   const key = messageKey({ connector, title, body })
   const timestamp = now()
-  const state = readState(cwd)
 
-  if (state.recent[key] && timestamp - state.recent[key] < DEDUPE_WINDOW_MS) {
-    return { ok: true, deduped: true, connector, chunks: chunks.length }
-  }
+  // Reserve the slot and the request budget under a lock, before any network I/O:
+  // two concurrent runs must not both pass the same limit check.
+  const reservation = mutateState(cwd, (state) => {
+    if (state.recent[key] && timestamp - state.recent[key] < DEDUPE_WINDOW_MS) {
+      return { now: timestamp, deduped: true }
+    }
+    if (timestamp - state.windowStart > 60_000) {
+      state.windowStart = timestamp
+      state.windowCount = 0
+    }
+    // Count actual requests, not messages: one long message used to bypass the cap.
+    if (state.windowCount + chunks.length > RATE_LIMIT_PER_MIN) {
+      return { now: timestamp, rateLimited: true }
+    }
+    state.recent[key] = timestamp
+    state.windowCount += chunks.length
+    return { now: timestamp, reserved: true }
+  })
 
-  if (timestamp - state.windowStart > 60_000) {
-    state.windowStart = timestamp
-    state.windowCount = 0
-  }
-  if (state.windowCount >= RATE_LIMIT_PER_MIN) {
-    const skipped = { ok: false, stage: 'rate-limit', error: `more than ${RATE_LIMIT_PER_MIN} messages per minute`, connector }
+  if (reservation.deduped) return { ok: true, deduped: true, connector, chunks: chunks.length }
+  if (reservation.rateLimited) {
     audit(cwd, { timestamp, connector, status: 'rate-limited', title })
-    return skipped
+    return {
+      ok: false,
+      stage: 'rate-limit',
+      error: `sending ${chunks.length} chunk(s) would exceed ${RATE_LIMIT_PER_MIN} requests per minute`,
+      connector,
+    }
   }
 
   const secretResult = readSecret({ ref })
@@ -189,27 +264,34 @@ export async function notify({
     } catch (error) {
       const stage = error instanceof QQError ? error.stage : (error && error.stage) || 'transport'
       const status = typeof error?.status === 'number' ? error.status : null
-      audit(cwd, { timestamp, connector, status: 'failed', title, httpStatus: status })
+      // Keep the request budget charged (it was reserved before sending) but drop
+      // the dedupe marker so the operator can retry a failed message immediately.
+      mutateState(cwd, (state) => {
+        delete state.recent[key]
+        return { now: timestamp }
+      })
+      audit(cwd, { timestamp, connector, status: 'failed', title, httpStatus: status, chunks: delivered })
       return { ok: false, stage, error: String(error?.message ?? error), connector, delivered }
     }
     delivered += 1
   }
 
-  state.recent[key] = timestamp
-  state.windowCount += 1
-  writeState(cwd, state, timestamp)
   audit(cwd, { timestamp, connector, status: 'sent', title, chunks: delivered })
   return { ok: true, connector, chunks: delivered }
 }
 
 function audit(cwd, { timestamp, connector, status, title, chunks, httpStatus }) {
+  // Audit records keep a title hash and a short prefix only: titles can carry
+  // personal context, and the log must stay safe to share in a bug report.
   try {
     mkdirSync(stateDir(cwd), { recursive: true })
+    const safeTitle = String(title ?? '')
     const record = {
       ts: new Date(timestamp).toISOString(),
       connector,
       status,
-      title: String(title ?? '').slice(0, 80),
+      titleHash: createHash('sha256').update(safeTitle).digest('hex').slice(0, 12),
+      titlePrefix: safeTitle.slice(0, 12),
       chunks: chunks ?? 0,
       ...(httpStatus === undefined ? {} : { httpStatus }),
     }

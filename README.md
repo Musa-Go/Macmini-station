@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.12.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.13.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。M5 提供 CI 与 PR 模板，但**不往你的仓库写 workflow**。工具不实现 agent 循环，也不自动合并。
 
 ---
@@ -84,7 +84,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | `station worktree remove <id> [--force]` | 移除工作树与分支；有未提交改动时拒绝 | 删目录与分支 | 0 / 2 |
 | `station worktree run <id> --task <name>` | 在工作区内执行 `agent.tasks` 里**已登记**的命令 | 执行外部命令；写日志 | 0 / 1 / 2 |
 | `station worktree agent <id> --prompt <text> [--verify <task>]` | 执行 `agent.command`（模板，支持 `{prompt}`/`{worktree}`），可选跑一次验证任务 | 执行你配置的 agent；写日志 | 0 / 1 / 2 |
-| `station worktree commit <id> -m <message>` | 在工作区内提交改动 | 写 git 历史 | 0 / 2 |
+| `station worktree commit <id> -m <message>` | 在工作区内提交改动；配置了 gate 时要求先通过测试 | 写 git 历史 | 0 / 2 |
 | `station worktree push <id>` | 推送 `station/job-*` 分支到 `origin` | 推送远端 | 0 / 1 / 2 |
 | `station worktree pr <id> --title <t> [--body <b>]` | 开 **Draft** PR（需要 `gh`） | 创建 Draft PR，从不合并 | 0 / 1 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
@@ -111,7 +111,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | 问题 | 行为 |
 |---|---|
 | 会自带或下载 restic 吗 | **不会**。只查找已安装的 restic（`RESTIC_BIN` → Homebrew → `/usr/local` → `PATH`），找不到就给出安装命令 |
-| 密码从哪来 | 只读 `RESTIC_PASSWORD_FILE`；密码**不会**出现在 argv、日志或进程环境里 |
+| 密码从哪来 | 只读 `RESTIC_PASSWORD_FILE`；密码**不会**出现在 argv 或日志里。文件必须是常规文件、属于当前用户、且权限不宽于 `600`，否则直接拒绝 |
 | 第一次跑会怎样 | 仓库不存在就 `restic init`，然后备份 `.station/` 与 `station.json` |
 | 备份范围 | 由 `storage.backup.include` 决定，默认只含工具自身的 `.station/` 与 `station.json`；要备用户数据就显式加路径，**默认不碰项目目录** |
 | 恢复演练 | `backup restore --into <dir>` 恢复最新快照，用来证明备份真的能打开 |
@@ -166,7 +166,7 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `machine.profile` | `profiles/` 下的文件名 | 决定启用哪些能力 |
-| `storage.backup.target.type` | `local` · `external-disk` · `smb-restic` · `s3-restic` | 后两者尚未实现执行，只做校验与提示 |
+| `storage.backup.target.type` | `local` · `external-disk` · `smb-restic` · `s3-restic` | `s3-restic` **未实现**：执行时会直接报错，不会退化成写本地 |
 | `storage.backup.target.path` | 路径，支持 `~/` | 目标不存在时报 `warn`，不自动创建 |
 | `storage.backup.target.host` / `share` | 字符串 | 仅 `smb-restic` 必填 |
 | `storage.backup.schedule` | 五段 cron | `doctor` 会校验字段数量 |
@@ -182,6 +182,8 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `agent.tasks` | `{名称: [argv...]}` | **只有这里登记的命令能被执行**；示例 `{"test":["npm","test"]}`；不经过 shell |
 | `agent.command` | argv 模板 | `worktree agent` 执行它；支持 `{prompt}` / `{worktree}` 占位符，例如 `["dsh","headless","--permission-mode","workspace-write","{prompt}"]` |
 | `agent.taskTimeoutSeconds` | 1–3600 | 单任务超时，默认 600；超时按进程组 SIGKILL |
+| `agent.gate.task` | `agent.tasks` 里的任务名 | **测试门槛**：配置后，`commit`/`push` 必须有一次针对**当前工作树内容**的通过记录 |
+| `agent.gate.required` | 布尔，默认 `true`（当 `gate` 存在时） | 设为 `false` 可仅告警不拦截 |
 | `capabilities.enabled` | 能力 id 数组 | 决定 `status` 探测哪些；重复 id 会被校验拒绝 |
 
 **为什么用 JSON 而不是 YAML**：YAML 需要解析器，会破坏"零依赖"这条最有价值的性质。配置本身不复杂，注释写在本文档与 schema 里。
@@ -271,7 +273,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 136 个用例，零依赖
+npm test                          # 159 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -313,7 +315,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
 | **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 校验、M3.2 bark、M3.3 QQ 出站、M3.5 Tailscale 发布已合并；**M3.4 QQ 入站暂缓**（见 [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) D1） |
-| **M4** | Agent 任务执行 | ✅ M4.1 隔离工作区 / M4.2 受控任务 / M4.3 agent 执行 / M4.4 提交与 Draft PR |
+| **M4** | Agent 任务执行 | ✅ M4.1 工作树 / M4.2 受控任务 / M4.3 agent 执行 / M4.4 提交与 Draft PR（测试门槛、记录校验已加） |
 | **M5** | CI 与 PR 模板（`templates/`）；Draft PR 由人工转正 | ✅ 模板已合并（工具不代写 workflow） |
 
 后续里程碑都遵守同一条底线：**任何"会改变系统"的动作都必须先 `plan` 再 `apply`，并且可回滚。**
@@ -367,12 +369,23 @@ station notify --title "构建完成" --body "M3.3 已合并" --dry-run
 
 ## 12. 安全边界
 
+**能力范围内**
+
 - 不替你 `git init`、不自动推送代码、不读取密钥文件。
 - 能力探测只做 HTTP/路径/挂载/文件新鲜度检查，**不执行 manifest 声明的命令**。
-- **不自带、不下载任何二进制**：restic 由用户自行安装，本工具只调用它。
+- **不自带、不下载任何二进制**：restic 与 Tailscale 由用户自行安装，本工具只调用。
 - 配置文件不存明文凭据；连接器一律使用系统钥匙串引用。
-- `agent.enabled` 在隔离 worktree、预算与测试门槛实现之前保持 `false`。
-- 报告问题请不要贴 token、密钥或包含个人路径的完整日志。
+- 回滚只认**带签名的 journal**，只删它自己创建、且位于 `.station/` 或备份目标内的路径；文件必须带记录时的哈希才可能被删除。
+- `commit`/`push`/`pr` 前会核对 job 记录与 git 实际 worktree、分支是否一致，**记录被篡改会导致拒绝执行而不是写进 `main`**。
+- 发布前若配置了 `agent.gate.task`，必须有针对当前工作树内容的通过记录。
+
+**不在能力范围内（重要）**
+
+- **M4 的 worktree 不是操作系统级沙箱**。任务与 agent 以你自己的用户身份运行，能访问你的家目录、网络和本机一切该用户可访问的资源。它只保证"改动发生在独立 git 工作树里"，不保证"进程被限制在工作树里"。
+- 因此**只应对可信代码运行 `worktree agent`**；不可信来源的仓库应放在独立低权限账号或虚拟机里。
+- 钥匙串条目由你创建；本工具不生成、不轮换、不备份密钥。
+
+报告问题请不要贴 token、密钥或包含个人路径的完整日志。
 
 ---
 

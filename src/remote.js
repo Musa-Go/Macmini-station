@@ -8,8 +8,10 @@
  *   - no secrets: Tailscale owns its own credentials, this tool never sees them.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { join } from 'node:path'
+import { stateDir } from './state.js'
 
 export const TAILSCALE_CANDIDATES = [
   '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
@@ -52,6 +54,29 @@ export function tailnetOnline({ path, probe }) {
   return { ok: true }
 }
 
+/** Ports this tool published previously, so it can reconcile instead of leaking. */
+export function publishedFile(cwd) {
+  return join(stateDir(cwd), 'expose.json')
+}
+
+export function readPublished({ cwd }) {
+  const path = publishedFile(cwd)
+  if (!existsSync(path)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    return Array.isArray(parsed.ports) ? parsed.ports.filter((port) => Number.isInteger(port)) : []
+  } catch {
+    return []
+  }
+}
+
+export function writePublished({ cwd, ports }) {
+  mkdirSync(stateDir(cwd), { recursive: true })
+  writeFileSync(publishedFile(cwd), `${JSON.stringify({ ports, updatedAt: new Date().toISOString() }, null, 2)}\n`, {
+    mode: 0o600,
+  })
+}
+
 export function serveCommands(ports, { reset = false } = {}) {
   return ports.map((port) => (reset ? ['serve', `--https=${port}`, 'off'] : ['serve', '--bg', `--https=${port}`, 'http://127.0.0.1:' + port]))
 }
@@ -59,68 +84,102 @@ export function serveCommands(ports, { reset = false } = {}) {
 /**
  * Publish or unpublish the configured ports. Returns a structured result.
  */
-export function expose({ config, dryRun = false, off = false, probe = defaultProbe }) {
+export function expose({ cwd, config, dryRun = false, off = false, probe = defaultProbe }) {
   const remote = config.remoteAccess ?? {}
-  if (remote.enabled !== true) {
+  const enabled = remote.enabled === true
+  const wanted = Array.isArray(remote.ports) ? remote.ports.filter((port) => Number.isInteger(port) && port > 0) : []
+  const published = cwd ? readPublished({ cwd }) : []
+
+  // `--off` must keep working after the user disables remote access; otherwise
+  // turning the feature off could leave a published port behind.
+  if (!enabled && !off) {
     return {
       ok: false,
       stage: 'config',
       error: 'remoteAccess.enabled is false; nothing is published (set it to true to opt in)',
     }
   }
-  const ports = Array.isArray(remote.ports) ? remote.ports.filter((p) => Number.isInteger(p) && p > 0) : []
-  if (ports.length === 0) {
+  if (enabled && wanted.length === 0 && !off) {
     return { ok: false, stage: 'config', error: 'remoteAccess.ports is empty; list the ports to publish explicitly' }
   }
 
   const tailscale = findTailscale({ probe })
   if (!tailscale.ok) return { ok: false, stage: 'tailscale', ...tailscale }
 
+  let toServe = []
+  let toOff = []
+  if (off) {
+    // Only what this tool actually published (plus current config ports when the
+    // feature is still enabled). A disabled config must not try to unpublish
+    // ports it never served.
+    toOff = [...new Set([...published, ...(enabled ? wanted : [])])]
+    if (toOff.length === 0) {
+      return { ok: true, off: true, ports: [], results: [], note: 'nothing recorded as published; nothing to unpublish' }
+    }
+  } else {
+    toServe = wanted
+    toOff = published.filter((port) => !wanted.includes(port))
+  }
+
   const online = tailnetOnline({ path: tailscale.path, probe })
-  if (!online.ok && !off) {
+  if (!online.ok && toServe.length > 0) {
     return { ok: false, stage: 'tailnet', error: online.error, hint: 'run `tailscale up` and sign in first' }
   }
 
-  const commands = serveCommands(ports, { reset: off })
+  const serveArgs = serveCommands(toServe)
+  const offArgs = serveCommands(toOff, { reset: true })
   if (dryRun) {
     return {
       ok: true,
       dryRun: true,
       tailscale: tailscale.path,
-      commands: commands.map((args) => ['tailscale', ...args].join(' ')),
+      commands: [...offArgs, ...serveArgs].map((args) => ['tailscale', ...args].join(' ')),
+      wouldServe: toServe,
+      wouldOff: toOff,
     }
   }
 
   const results = []
-  for (let index = 0; index < commands.length; index += 1) {
-    const args = commands[index]
-    const result = probe(tailscale.path, args)
-    results.push({ port: ports[index], ok: result.ok, ...(result.ok ? {} : { error: result.message ?? 'command failed' }) })
+  for (let index = 0; index < offArgs.length; index += 1) {
+    const result = probe(tailscale.path, offArgs[index])
+    results.push({ port: toOff[index], action: 'off', ok: result.ok, ...(result.ok ? {} : { error: result.message ?? 'command failed' }) })
+  }
+  for (let index = 0; index < serveArgs.length; index += 1) {
+    const result = probe(tailscale.path, serveArgs[index])
+    results.push({ port: toServe[index], action: 'serve', ok: result.ok, ...(result.ok ? {} : { error: result.message ?? 'command failed' }) })
   }
 
-  const failed = results.filter((r) => !r.ok)
+  const failed = results.filter((result) => !result.ok)
+  const allOk = failed.length === 0
+  if (cwd && allOk) writePublished({ cwd, ports: off ? [] : toServe })
+
   return {
-    ok: failed.length === 0,
-    stage: failed.length === 0 ? undefined : 'apply',
+    ok: allOk,
+    stage: allOk ? undefined : 'apply',
     tailscale: tailscale.path,
-    ports,
+    ports: off ? toOff : toServe,
+    off,
     results,
-    ...(failed.length === 0 ? {} : { error: `${failed.length} of ${results.length} serve command(s) failed` }),
+    ...(allOk ? {} : { error: `${failed.length} of ${results.length} tailscale command(s) failed` }),
   }
 }
 
 export function describeExpose(result) {
   if (result.ok && result.dryRun) {
-    const lines = ['expose (dry run): nothing published', `  tailscale: ${result.tailscale}`]
+    const lines = ['expose (dry run): nothing changed', `  tailscale: ${result.tailscale}`]
     for (const command of result.commands) lines.push(`  would run: ${command}`)
     return lines.join('\n')
   }
+  if (result.ok && result.note) return `expose: ${result.note}`
   if (!result.ok) {
     const lines = [`expose: failed at ${result.stage}: ${result.error}`]
     if (result.hint) lines.push(`  fix: ${result.hint}`)
     return lines.join('\n')
   }
-  const lines = [`expose: ${result.ports.length} port(s) published on the tailnet`]
-  for (const item of result.results) lines.push(`  ${item.ok ? 'ok  ' : 'fail'} :${item.port}${item.error ? ` (${item.error})` : ''}`)
+  const lines = [result.off ? 'expose: unpublished' : `expose: ${result.ports.length} port(s) published on the tailnet`]
+  for (const item of result.results) {
+    const action = item.action === 'off' ? 'off ' : 'serv'
+    lines.push(`  ${item.ok ? 'ok  ' : 'fail'} ${action} :${item.port}${item.error ? ` (${item.error})` : ''}`)
+  }
   return lines.join('\n')
 }
