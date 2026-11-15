@@ -16,11 +16,13 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { stateDir } from './state.js'
+import { deliverQQ, QQError } from './connectors/qq.js'
 
 export const DEDUPE_WINDOW_MS = 5 * 60 * 1000
 export const RATE_LIMIT_PER_MIN = 20
 export const MAX_CHUNK_BYTES = 1500
 const BARK_ENDPOINT = 'https://api.day.app/push'
+const SUPPORTED_CONNECTORS = ['bark', 'qq']
 
 export function stateFile(cwd) {
   return join(stateDir(cwd), 'notify-state.json')
@@ -129,12 +131,12 @@ export async function notify({
   if (connector === 'none') {
     return { ok: false, stage: 'config', error: 'notifications.primary is none; nothing to deliver' }
   }
-  if (connector !== 'bark') {
-    return { ok: false, stage: 'connector', error: `${connector} delivery is not implemented yet (M3.2 ships bark first)` }
+  if (!SUPPORTED_CONNECTORS.includes(connector)) {
+    return { ok: false, stage: 'connector', error: `${connector} delivery is not implemented yet` }
   }
 
-  const ref = notifications.bark?.secretRef
-  if (!ref) return { ok: false, stage: 'config', error: 'notifications.bark.secretRef is required' }
+  const ref = notifications[connector]?.secretRef
+  if (!ref) return { ok: false, stage: 'config', error: `notifications.${connector}.secretRef is required` }
 
   const chunks = chunkBody(body)
   const key = messageKey({ connector, title, body })
@@ -177,10 +179,18 @@ export async function notify({
 
   let delivered = 0
   for (const chunk of chunks) {
-    const result = await sendBark({ secret: secretResult.secret, title, body: chunk, fetchImpl })
-    if (!result.ok) {
-      audit(cwd, { timestamp, connector, status: 'failed', title, httpStatus: result.status ?? null })
-      return { ok: false, stage: 'transport', error: result.error ?? `HTTP ${result.status}`, connector, delivered }
+    try {
+      if (connector === 'bark') {
+        const result = await sendBark({ secret: secretResult.secret, title, body: chunk, fetchImpl })
+        if (!result.ok) throw Object.assign(new Error(result.error ?? `HTTP ${result.status}`), { stage: 'transport', status: result.status })
+      } else {
+        await deliverQQ({ config, secret: secretResult.secret, content: `${title}\n${chunk}`.trim(), fetchImpl })
+      }
+    } catch (error) {
+      const stage = error instanceof QQError ? error.stage : (error && error.stage) || 'transport'
+      const status = typeof error?.status === 'number' ? error.status : null
+      audit(cwd, { timestamp, connector, status: 'failed', title, httpStatus: status })
+      return { ok: false, stage, error: String(error?.message ?? error), connector, delivered }
     }
     delivered += 1
   }
