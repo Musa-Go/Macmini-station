@@ -26,6 +26,7 @@ export function defaultConfig() {
       backup: {
         enabled: true,
         target: { type: 'local', path: '~/Backups/Macmini-station' },
+        include: ['.station', 'station.json'],
         schedule: '30 3 * * *',
         retention: { daily: 7, weekly: 4, monthly: 6 },
       },

@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defaultConfig, loadConfig, configPath } from './config.js'
 import { run, mountProbe, expandHome } from './probes.js'
+import { findRestic } from './backup.js'
 
 const MIN_NODE_MAJOR = 20
 
@@ -25,6 +26,7 @@ export function runDoctor({ cwd, env = process.env, root }) {
   checks.push(checkConfigFile({ cwd }))
 
   checks.push(checkBackupTarget({ config }))
+  checks.push(checkRestic({ config }))
   checks.push(checkRemoteAccess({ config }))
   checks.push(checkNotifications({ config }))
   checks.push(checkAgent({ config }))
@@ -151,6 +153,24 @@ function checkBackupTarget({ config }) {
     }
   }
   return { id: 'backup', title: 'Backup target', status: 'unknown', detail: `type ${target.type} not implemented in 0.1` }
+}
+
+function checkRestic({ config }) {
+  const backup = config.storage?.backup
+  if (!backup?.enabled) {
+    return { id: 'restic', title: 'restic', status: 'ok', detail: 'backup disabled' }
+  }
+  const restic = findRestic()
+  if (restic.ok) {
+    return { id: 'restic', title: 'restic', status: 'ok', detail: `${restic.path} (${restic.version ?? 'version unknown'})` }
+  }
+  return {
+    id: 'restic',
+    title: 'restic',
+    status: 'warn',
+    detail: restic.error ?? 'restic not found',
+    fix: restic.hint ?? 'install restic; the tool never bundles a binary',
+  }
 }
 
 function checkRemoteAccess({ config }) {

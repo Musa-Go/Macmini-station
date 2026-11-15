@@ -39,6 +39,11 @@
               }
             },
             "schedule": { "type": "string", "pattern": "^\\s*\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s*$" },
+            "include": {
+              "type": "array",
+              "description": "paths (absolute, or relative to the station directory) to snapshot; defaults to ['.station', 'station.json']",
+              "items": { "type": "string", "minLength": 1 }
+            },
             "retention": {
               "type": "object",
               "additionalProperties": false,

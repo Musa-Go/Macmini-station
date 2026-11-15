@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultConfig, configPath } from '../src/config.js'
-import { backup, check, findRestic, restore, resolveTarget } from '../src/backup.js'
+import { backup, check, findRestic, restore, resolveSources, resolveTarget } from '../src/backup.js'
 
 /**
  * These tests never call a real restic. A stub shell script stands in for it and
@@ -189,6 +189,27 @@ test('restore requires --into and copies into a fresh directory', () => {
     assert.equal(result.target, into)
     assert.ok(existsSync(into))
     assert.ok(s.calls().some((c) => c.includes('restore') && c.includes(into)))
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('resolveSources defaults to state + config and honours a custom include list', () => {
+  const s = sandbox()
+  try {
+    mkdirSync(join(s.dir, '.station'), { recursive: true })
+    const defaults = resolveSources({ config: s.config, cwd: s.dir })
+    assert.deepEqual(defaults, [join(s.dir, '.station'), join(s.dir, 'station.json')])
+
+    const custom = JSON.parse(JSON.stringify(s.config))
+    custom.storage.backup.include = ['station.json', join(s.dir, 'extra.txt')]
+    writeFileSync(join(s.dir, 'extra.txt'), 'extra')
+    const resolved = resolveSources({ config: custom, cwd: s.dir })
+    assert.deepEqual(resolved, [join(s.dir, 'station.json'), join(s.dir, 'extra.txt')])
+
+    const missing = JSON.parse(JSON.stringify(s.config))
+    missing.storage.backup.include = ['nope.txt']
+    assert.deepEqual(resolveSources({ config: missing, cwd: s.dir }), [])
   } finally {
     s.cleanup()
   }

@@ -78,6 +78,20 @@ test('schema requires a working directory when the agent is enabled', () => {
   assert.ok(validateConfig(config).some((p) => p.path === 'agent.workingDirectory'))
 })
 
+test('schema validates the optional backup include list', () => {
+  const config = defaultConfig()
+  assert.deepEqual(config.storage.backup.include, ['.station', 'station.json'])
+  assert.deepEqual(validateConfig(config), [])
+
+  const bad = defaultConfig()
+  bad.storage.backup.include = ['']
+  assert.ok(validateConfig(bad).some((p) => p.path === 'storage.backup.include'))
+
+  const notArray = defaultConfig()
+  notArray.storage.backup.include = 'station.json'
+  assert.ok(validateConfig(notArray).some((p) => p.path === 'storage.backup.include'))
+})
+
 test('schema rejects duplicate capability ids', () => {
   const config = defaultConfig()
   config.capabilities.enabled = ['a', 'a']

@@ -80,6 +80,16 @@ export function validateConfig(config) {
           requireString(problems, target.share, 'storage.backup.target.share')
         }
       }
+      if (backup.include !== undefined) {
+        if (!Array.isArray(backup.include)) push(problems, 'storage.backup.include', 'must be an array of paths')
+        else {
+          for (const entry of backup.include) {
+            if (typeof entry !== 'string' || entry.trim() === '') {
+              push(problems, 'storage.backup.include', 'entries must be non-empty strings')
+            }
+          }
+        }
+      }
       const retention = backup.retention
       if (!isPlainObject(retention)) push(problems, 'storage.backup.retention', 'must be an object')
       else {
