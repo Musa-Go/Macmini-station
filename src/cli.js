@@ -13,7 +13,8 @@ import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
 import { describeNotify, notify } from './notify.js'
 import { describeExpose, expose } from './remote.js'
 import { createWorktree, describeWorktrees, listWorktrees, removeWorktree } from './worktree.js'
-import { describeRun, readRuns, runTask } from './jobrun.js'
+import { describeRun, readRuns, runAgent, runTask } from './jobrun.js'
+import { commitJob, describePublish, openDraftPr, pushJob } from './publish.js'
 import {
   apply,
   describeApply,
@@ -58,6 +59,12 @@ Usage:
   station worktree remove <id> [--force] [--json]
   station worktree run <id> --task <name> [--json]
                                  Run one whitelisted task (agent.tasks) inside the worktree
+  station worktree agent <id> --prompt <text> [--verify <task>] [--json]
+                                 Run the configured agent command inside the worktree
+  station worktree commit <id> -m <message> [--json]
+  station worktree push <id> [--json]
+  station worktree pr <id> --title <t> [--body <b>] [--json]
+                                 Commit / push the job branch / open a Draft PR (drafts only)
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -85,7 +92,10 @@ function positionalEdge(argv, command) {
 
 function firstPositionalAfter(argv, command, skip = []) {
   const index = argv.indexOf(command)
-  const skipBefore = new Set(['--repo', '--branch', '--force', '--task'])
+  const skipBefore = new Set([
+    '--repo', '--branch', '--force', '--task', '--prompt', '--verify',
+    '--title', '--body', '--m', '--message', '-m', '-message',
+  ])
   for (let i = index + 1; i < argv.length; i += 1) {
     const value = argv[i]
     if (value.startsWith('--')) continue
@@ -103,13 +113,14 @@ function positionalSub(argv) {
   return next && !next.startsWith('--') ? next : undefined
 }
 
-/** Read a `--key value` pair without turning values into flags. */
+/** Read a `--key value` / `-key value` pair without turning values into flags. */
 function flagValue(argv, key) {
-  const prefix = `--${key}`
+  const long = `--${key}`
+  const short = `-${key}`
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
-    if (arg === prefix) return argv[index + 1]
-    if (arg.startsWith(`${prefix}=`)) return arg.slice(prefix.length + 1)
+    if (arg === long || arg === short) return argv[index + 1]
+    if (arg.startsWith(`${long}=`)) return arg.slice(long.length + 1)
   }
   return undefined
 }
@@ -249,6 +260,51 @@ export async function main(argv, io) {
             out('nothing was executed: this only prepares an isolated worktree\n')
           }
           return EXIT_OK
+        }
+        if (sub === 'agent') {
+          const id = firstPositionalAfter(argv, 'worktree', ['agent', '--prompt', '--verify'])
+          if (!id) throw new Error('worktree id is required: station worktree agent <id> --prompt <text>')
+          const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
+          if (!job) throw new Error(`no worktree record with id ${id}`)
+          const config = loadConfig({ cwd: io.cwd })
+          const result = await runAgent({ cwd: io.cwd, job, prompt: flagValue(argv, 'prompt'), config })
+          let verify = null
+          const verifyTask = flagValue(argv, 'verify')
+          if (verifyTask) verify = await runTask({ cwd: io.cwd, job, task: verifyTask, config })
+          const payload = { agent: result, ...(verify ? { verify } : {}) }
+          if (json) out(`${JSON.stringify(payload, null, 2)}\n`)
+          else {
+            out(`${describeRun(result)}\n`)
+            if (verify) out(`${describeRun(verify)}\n`)
+          }
+          return result.ok && (!verify || verify.ok) ? EXIT_OK : EXIT_WARN
+        }
+        if (sub === 'commit') {
+          const id = firstPositionalAfter(argv, 'worktree', ['commit'])
+          const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
+          if (!job) throw new Error(`no worktree record with id ${id ?? '(missing)'}`)
+          const result = commitJob({ job, message: flagValue(argv, 'm') ?? flagValue(argv, 'message') })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(`${describePublish('commit', result)}\n`)
+          return EXIT_OK
+        }
+        if (sub === 'push') {
+          const id = firstPositionalAfter(argv, 'worktree', ['push'])
+          const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
+          if (!job) throw new Error(`no worktree record with id ${id ?? '(missing)'}`)
+          const result = pushJob({ job })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(`${describePublish('push', result)}\n`)
+          return result.ok ? EXIT_OK : EXIT_WARN
+        }
+        if (sub === 'pr') {
+          const id = firstPositionalAfter(argv, 'worktree', ['pr'])
+          const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
+          if (!job) throw new Error(`no worktree record with id ${id ?? '(missing)'}`)
+          const result = openDraftPr({ job, title: flagValue(argv, 'title') ?? '', body: flagValue(argv, 'body') ?? '' })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(`${describePublish('pr', result)}\n`)
+          return result.ok ? EXIT_OK : EXIT_WARN
         }
         if (sub === 'run') {
           const id = firstPositionalAfter(argv, 'worktree', ['run', '--task'])

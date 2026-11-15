@@ -242,6 +242,15 @@
           "minimum": 1,
           "maximum": 3600,
           "description": "per-task timeout, default 600"
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "argv template executed by `worktree agent`; supports {prompt} and {worktree}"
         }
       }
     },

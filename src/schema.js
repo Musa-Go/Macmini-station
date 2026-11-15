@@ -202,6 +202,19 @@ export function validateConfig(config) {
       }
     }
   }
+  if (isPlainObject(agentTaskCfg) && agentTaskCfg.command !== undefined) {
+    const cmd = agentTaskCfg.command
+    if (!Array.isArray(cmd) || cmd.length === 0) {
+      push(problems, 'agent.command', 'must be a non-empty argv array (use {prompt} and/or {worktree} placeholders)')
+    } else {
+      for (const part of cmd) {
+        if (typeof part !== 'string' || part === '') {
+          push(problems, 'agent.command', 'every argv entry must be a non-empty string')
+          break
+        }
+      }
+    }
+  }
   if (isPlainObject(agentTaskCfg) && agentTaskCfg.taskTimeoutSeconds !== undefined) {
     if (!Number.isInteger(agentTaskCfg.taskTimeoutSeconds) || agentTaskCfg.taskTimeoutSeconds < 1 || agentTaskCfg.taskTimeoutSeconds > 3600) {
       push(problems, 'agent.taskTimeoutSeconds', 'must be an integer between 1 and 3600')
