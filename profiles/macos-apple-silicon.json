@@ -1,0 +1,22 @@
+{
+  "id": "macos-apple-silicon",
+  "title": "macOS on Apple Silicon",
+  "platform": {
+    "os": "darwin",
+    "arch": "arm64",
+    "minimumNodeMajor": 20
+  },
+  "capabilities": ["local-backup", "http-endpoint"],
+  "optional": ["nas", "tailscale", "qq-notifications"],
+  "requirements": {
+    "local-backup": [],
+    "http-endpoint": [],
+    "nas": ["SMB share reachable", "credentials stored in Keychain"],
+    "tailscale": ["Tailscale installed and logged in"],
+    "qq-notifications": ["QQ bot AppID and AppSecret"]
+  },
+  "notes": [
+    "No capability in this profile requires a NAS, a public domain, or an AI provider.",
+    "Optional integrations are configured later through station.json and adapters."
+  ]
+}

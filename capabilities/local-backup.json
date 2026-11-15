@@ -1,0 +1,16 @@
+{
+  "id": "local-backup",
+  "title": "Local backup",
+  "summary": "Scheduled encrypted backup of configuration and selected data to a local or external path. A NAS is optional and never required.",
+  "kind": "path",
+  "optional": true,
+  "probe": {
+    "path": "~/Backups/Macmini-station"
+  },
+  "data": ["station.json", "state directory"],
+  "permissions": ["read: configured data paths", "write: backup target path"],
+  "notes": [
+    "A missing target directory is a warning, not a failure: `station apply` (later milestone) creates it.",
+    "When a NAS target is configured, its absence must downgrade to a warning instead of blocking the station."
+  ]
+}

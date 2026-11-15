@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Musa-Go/Macmini-station/schema/station.schema.json",
+  "title": "Macmini-station configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "machine", "storage", "remoteAccess", "notifications", "agent", "capabilities"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName", "profile"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "minLength": 1, "description": "id of a file in profiles/" }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backup"],
+      "properties": {
+        "backup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "target", "schedule", "retention"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "target": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "path"],
+              "properties": {
+                "type": { "enum": ["local", "external-disk", "smb-restic", "s3-restic"] },
+                "path": { "type": "string", "minLength": 1 },
+                "host": { "type": "string", "description": "required for smb-restic" },
+                "share": { "type": "string", "description": "required for smb-restic" }
+              }
+            },
+            "schedule": { "type": "string", "pattern": "^\\s*\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s*$" },
+            "retention": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["daily", "weekly", "monthly"],
+              "properties": {
+                "daily": { "type": "integer", "minimum": 1, "maximum": 365 },
+                "weekly": { "type": "integer", "minimum": 0, "maximum": 52 },
+                "monthly": { "type": "integer", "minimum": 0, "maximum": 24 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "remoteAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "provider"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "provider": { "enum": ["tailscale"] }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary"],
+      "properties": {
+        "primary": { "enum": ["none", "qq", "bark"] }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "workingDirectory"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "workingDirectory": { "type": "string" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    }
+  }
+}
