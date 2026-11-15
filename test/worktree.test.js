@@ -4,7 +4,17 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorktree, isClean, listWorktrees, removeWorktree, repoRoot } from '../src/worktree.js'
+import {
+  assertTrustedJob,
+  createWorktree,
+  isClean,
+  listWorktrees,
+  removeWorktree,
+  repoRoot,
+  validateJobRecord,
+  worktreeFingerprint,
+} from '../src/worktree.js'
+import { main } from '../src/cli.js'
 import { jobsDir, worktreesDir } from '../src/worktree.js'
 
 function git(cwd, args) {
@@ -174,6 +184,60 @@ test('state directories live under .station and are created on demand', () => {
     assert.equal(existsSync(worktreesDir(t.station)), false)
     createWorktree({ cwd: t.station, repo: t.repo })
     assert.equal(existsSync(worktreesDir(t.station)), true)
+  } finally {
+    t.cleanup()
+  }
+})
+test('validateJobRecord rejects a record whose path was redirected elsewhere', () => {
+  const t = tempRepo()
+  try {
+    const job = createWorktree({ cwd: t.station, repo: t.repo })
+    assert.equal(validateJobRecord(t.station, job, `${job.id}.json`), null)
+    assert.match(validateJobRecord(t.station, { ...job, path: t.repo }, `${job.id}.json`), /worktree directory/)
+    assert.match(validateJobRecord(t.station, { ...job, branch: 'main' }, `${job.id}.json`), /branch must start/)
+    assert.match(validateJobRecord(t.station, { ...job, id: 'job-bad' }, 'job-bad.json'), /not a recognised/)
+  } finally {
+    t.cleanup()
+  }
+})
+
+test('assertTrustedJob refuses a worktree that is not on its job branch', () => {
+  const t = tempRepo()
+  try {
+    const job = createWorktree({ cwd: t.station, repo: t.repo })
+    assert.equal(assertTrustedJob({ cwd: t.station, job }).id, job.id)
+    // A fresh branch keeps the test independent of `main` being checked out in
+    // the source repository (git refuses a second checkout of the same branch).
+    git(job.path, ['checkout', '-q', '-b', 'somewhere-else'])
+    assert.throws(() => assertTrustedJob({ cwd: t.station, job }), /has somewhere-else checked out/)
+  } finally {
+    t.cleanup()
+  }
+})
+
+test('worktreeFingerprint changes when content changes', () => {
+  const t = tempRepo()
+  try {
+    const job = createWorktree({ cwd: t.station, repo: t.repo })
+    const before = worktreeFingerprint({ path: job.path })
+    writeFileSync(join(job.path, 'change.txt'), 'one')
+    const after = worktreeFingerprint({ path: job.path })
+    assert.notEqual(before, after)
+    writeFileSync(join(job.path, 'change.txt'), 'two')
+    assert.notEqual(after, worktreeFingerprint({ path: job.path }))
+  } finally {
+    t.cleanup()
+  }
+})
+
+test('CLI remove resolves the id instead of the subcommand', async () => {
+  const t = tempRepo()
+  try {
+    const job = createWorktree({ cwd: t.station, repo: t.repo })
+    const io = { cwd: t.station, env: process.env, stdout: () => {}, stderr: () => {} }
+    assert.equal(await main(['worktree', 'remove', job.id], io), 0)
+    assert.equal(existsSync(job.path), false)
+    assert.equal(listWorktrees({ cwd: t.station }).length, 0)
   } finally {
     t.cleanup()
   }

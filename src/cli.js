@@ -191,6 +191,9 @@ export async function main(argv, io) {
 
       case 'rollback': {
         const to = flagValue(argv, 'to')
+        if (flags.has('to') && (to === undefined || to.startsWith('--'))) {
+          throw new Error('--to requires a journal id, e.g. `station rollback --to apply-20260101T000000-abcd`')
+        }
         const result = rollback({ cwd: io.cwd, to, dryRun: flags.has('dry-run') })
         if (json) out(`${JSON.stringify(result, null, 2)}\n`)
         else out(`${describeRollback(result)}\n`)
@@ -234,7 +237,7 @@ export async function main(argv, io) {
 
       case 'expose': {
         const config = loadConfig({ cwd: io.cwd })
-        const result = expose({ config, dryRun: flags.has('dry-run'), off: flags.has('off') })
+        const result = expose({ cwd: io.cwd, config, dryRun: flags.has('dry-run'), off: flags.has('off') })
         if (json) out(`${JSON.stringify(result, null, 2)}\n`)
         else out(`${describeExpose(result)}\n`)
         return result.ok ? EXIT_OK : EXIT_FAIL
@@ -280,10 +283,15 @@ export async function main(argv, io) {
           return result.ok && (!verify || verify.ok) ? EXIT_OK : EXIT_WARN
         }
         if (sub === 'commit') {
-          const id = firstPositionalAfter(argv, 'worktree', ['commit'])
+          const id = firstPositionalAfter(argv, 'worktree', ['commit', '-m', '-message'])
           const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
           if (!job) throw new Error(`no worktree record with id ${id ?? '(missing)'}`)
-          const result = commitJob({ job, message: flagValue(argv, 'm') ?? flagValue(argv, 'message') })
+          const result = commitJob({
+            cwd: io.cwd,
+            job,
+            message: flagValue(argv, 'm') ?? flagValue(argv, 'message'),
+            config: loadConfig({ cwd: io.cwd }),
+          })
           if (json) out(`${JSON.stringify(result, null, 2)}\n`)
           else out(`${describePublish('commit', result)}\n`)
           return EXIT_OK
@@ -292,7 +300,7 @@ export async function main(argv, io) {
           const id = firstPositionalAfter(argv, 'worktree', ['push'])
           const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
           if (!job) throw new Error(`no worktree record with id ${id ?? '(missing)'}`)
-          const result = pushJob({ job })
+          const result = pushJob({ cwd: io.cwd, job, config: loadConfig({ cwd: io.cwd }) })
           if (json) out(`${JSON.stringify(result, null, 2)}\n`)
           else out(`${describePublish('push', result)}\n`)
           return result.ok ? EXIT_OK : EXIT_WARN
@@ -301,7 +309,12 @@ export async function main(argv, io) {
           const id = firstPositionalAfter(argv, 'worktree', ['pr'])
           const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
           if (!job) throw new Error(`no worktree record with id ${id ?? '(missing)'}`)
-          const result = openDraftPr({ job, title: flagValue(argv, 'title') ?? '', body: flagValue(argv, 'body') ?? '' })
+          const result = openDraftPr({
+            cwd: io.cwd,
+            job,
+            title: flagValue(argv, 'title') ?? '',
+            body: flagValue(argv, 'body') ?? '',
+          })
           if (json) out(`${JSON.stringify(result, null, 2)}\n`)
           else out(`${describePublish('pr', result)}\n`)
           return result.ok ? EXIT_OK : EXIT_WARN
@@ -319,7 +332,7 @@ export async function main(argv, io) {
           return result.ok ? EXIT_OK : EXIT_WARN
         }
         if (sub === 'remove') {
-          const arg = flagValue(argv, '_id') ?? firstPositionalAfter(argv, 'worktree')
+          const arg = flagValue(argv, '_id') ?? firstPositionalAfter(argv, 'worktree', ['remove'])
           const result = removeWorktree({ cwd: io.cwd, id: arg, force: flags.has('force') })
           if (json) out(`${JSON.stringify(result, null, 2)}\n`)
           else out(`removed ${result.id} (${result.branch})\n`)

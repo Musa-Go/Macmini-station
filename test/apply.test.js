@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeDefaultConfig, defaultConfig, configPath } from '../src/config.js'
 import { apply, planApply, verify, rollback } from '../src/apply.js'
-import { journalDir, stateDir } from '../src/state.js'
+import { journalDir, stateDir, writeJournal } from '../src/state.js'
 
 function sandbox() {
   const dir = mkdtempSync(join(tmpdir(), 'station-apply-'))
@@ -48,7 +48,8 @@ test('apply creates directories, writes a journal, and never starts services', (
     assert.equal(result.dryRun, false)
     assert.ok(existsSync(stateDir(s.dir)))
     assert.ok(existsSync(s.backups), 'backup target should be created')
-    const journals = readdirSync(journalDir(s.dir))
+    // The directory also holds the signing key; only *.json files are journals.
+    const journals = readdirSync(journalDir(s.dir)).filter((name) => name.endsWith('.json'))
     assert.equal(journals.length, 1)
     const journal = JSON.parse(readFileSync(join(journalDir(s.dir), journals[0]), 'utf8'))
     assert.equal(journal.id, result.id)
@@ -127,9 +128,9 @@ test('rollback --dry-run changes nothing', () => {
   const s = sandbox()
   try {
     apply({ cwd: s.dir })
-    const before = readdirSync(join(stateDir(s.dir), 'journal')).length
+    const before = readdirSync(join(stateDir(s.dir), 'journal')).filter((n) => n.endsWith('.json')).length
     rollback({ cwd: s.dir, dryRun: true })
-    assert.equal(readdirSync(join(stateDir(s.dir), 'journal')).length, before)
+    assert.equal(readdirSync(join(stateDir(s.dir), 'journal')).filter((n) => n.endsWith('.json')).length, before)
   } finally {
     s.cleanup()
   }
@@ -140,7 +141,8 @@ test('rollback refuses a dry-run journal and unknown ids', () => {
   try {
     apply({ cwd: s.dir, dryRun: true })
     assert.throws(() => rollback({ cwd: s.dir }), /dry run|no apply journal/)
-    assert.throws(() => rollback({ cwd: s.dir, to: 'apply-nope' }), /no journal/)
+    assert.throws(() => rollback({ cwd: s.dir, to: 'apply-20260101T000000-abcd' }), /no journal/)
+    assert.throws(() => rollback({ cwd: s.dir, to: '../../etc/passwd' }), /invalid journal id/)
   } finally {
     s.cleanup()
   }
@@ -153,6 +155,67 @@ test('rollback writes a rollback record next to the journal', () => {
     rollback({ cwd: s.dir })
     const files = readdirSync(journalDir(s.dir))
     assert.ok(files.some((f) => f === `${applied.id}.rollback.json`))
+  } finally {
+    s.cleanup()
+  }
+})
+test('rollback refuses a forged journal and leaves the target untouched', () => {
+  const s = sandbox()
+  try {
+    apply({ cwd: s.dir })
+    const victim = join(s.dir, 'victim.txt')
+    writeFileSync(victim, 'keep me')
+    const forged = {
+      id: 'apply-20260101T000000-abcd',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      dryRun: false,
+      configPath: configPath({ cwd: s.dir }),
+      configHash: 'deadbeef',
+      created: [{ path: victim, kind: 'file' }],
+      actions: [],
+    }
+    mkdirSync(journalDir(s.dir), { recursive: true })
+    writeFileSync(join(journalDir(s.dir), `${forged.id}.json`), JSON.stringify(forged, null, 2))
+
+    assert.throws(() => rollback({ cwd: s.dir, to: forged.id }), /failed verification/)
+    assert.equal(existsSync(victim), true)
+
+    const report = verify({ cwd: s.dir })
+    assert.ok(report.checks.some((check) => check.id === 'journal-integrity' && check.status === 'critical'))
+  } finally {
+    s.cleanup()
+  }
+})
+
+test('a signed journal cannot delete outside its allowed roots or hashless files', () => {
+  const s = sandbox()
+  try {
+    const applied = apply({ cwd: s.dir })
+    const unprotected = join(s.dir, 'backups', 'no-hash.txt')
+    writeFileSync(unprotected, 'data')
+    const outside = join(s.dir, 'outside.txt')
+    writeFileSync(outside, 'outside')
+
+    // Sign the crafted journal the way the tool would, so this tests the path and
+    // hash rules rather than the signature check.
+    const journal = JSON.parse(readFileSync(join(journalDir(s.dir), `${applied.id}.json`), 'utf8'))
+    writeJournal(s.dir, {
+      ...journal,
+      created: [
+        ...journal.created,
+        { path: unprotected, kind: 'file' },
+        { path: outside, kind: 'file', hash: 'irrelevant' },
+        { kind: 'file' },
+      ],
+    })
+
+    const result = rollback({ cwd: s.dir, to: applied.id })
+    assert.equal(existsSync(unprotected), true, 'a file without a recorded hash must not be deleted')
+    assert.equal(existsSync(outside), true, 'paths outside the allowed roots must not be deleted')
+    const reasons = result.skipped.map((item) => item.reason).join(' | ')
+    assert.match(reasons, /no recorded hash/)
+    assert.match(reasons, /outside the state directory/)
+    assert.match(reasons, /malformed journal entry/)
   } finally {
     s.cleanup()
   }

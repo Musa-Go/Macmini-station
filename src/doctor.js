@@ -187,24 +187,39 @@ function checkRemoteAccess({ config }) {
   }
 }
 
+const IMPLEMENTED_CONNECTORS = ['bark', 'qq']
+
 function checkNotifications({ config }) {
   const notifications = config.notifications ?? {}
   const primary = notifications.primary ?? 'none'
   if (primary === 'none') {
     return { id: 'notifications', title: 'Notifications', status: 'ok', detail: 'disabled' }
   }
-  // Config can be valid before the connector exists; say so instead of implying
-  // that messages would actually be delivered.
   const configured = typeof notifications[primary] === 'object' && notifications[primary] !== null
   const fallback = notifications.fallback && notifications.fallback !== 'none' ? ` (fallback ${notifications.fallback})` : ''
+  if (!IMPLEMENTED_CONNECTORS.includes(primary)) {
+    return {
+      id: 'notifications',
+      title: 'Notifications',
+      status: 'warn',
+      detail: `${primary}: no delivery adapter for this connector`,
+      fix: `use one of: ${IMPLEMENTED_CONNECTORS.join(', ')}`,
+    }
+  }
+  if (!configured) {
+    return {
+      id: 'notifications',
+      title: 'Notifications',
+      status: 'warn',
+      detail: `${primary}${fallback}: no notifications.${primary} block`,
+      fix: `add notifications.${primary} with a keychain secretRef before enabling it`,
+    }
+  }
   return {
     id: 'notifications',
     title: 'Notifications',
-    status: 'warn',
-    detail: `${primary}${fallback}: configured but not implemented yet`,
-    fix: configured
-      ? 'connector delivery lands in M3.2+; until then keep "none" if you need silence'
-      : `add notifications.${primary} with a keychain secretRef before enabling it`,
+    status: 'ok',
+    detail: `${primary}${fallback}: adapter ready (secret read from the keychain at send time)`,
   }
 }
 

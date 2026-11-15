@@ -18,11 +18,29 @@ import {
   configHash,
   findJournal,
   latestJournal,
+  listJournals,
   newJournalId,
   stateDir,
   writeJournal,
   writeRollbackRecord,
 } from './state.js'
+
+/**
+ * Paths a rollback is ever allowed to touch: the state directory and the
+ * configured backup target. Anything else in a journal is ignored, so a forged
+ * entry cannot reach the rest of the filesystem.
+ */
+export function rollbackRoots({ cwd, config }) {
+  const roots = [resolve(stateDir(cwd))]
+  const target = config?.storage?.backup?.target?.path
+  if (typeof target === 'string' && target.trim() !== '') roots.push(resolve(expandHome(target)))
+  return roots
+}
+
+function isWithin(path, roots) {
+  const resolved = resolve(path)
+  return roots.some((root) => resolved === root || resolved.startsWith(`${root}/`))
+}
 
 function fileHash(path) {
   const content = readFileSync(path)
@@ -136,8 +154,25 @@ export function verify({ cwd, config }) {
     })
   }
 
+  const allJournals = listJournals(cwd)
+  const invalid = allJournals.filter((entry) => !entry.valid)
+  if (invalid.length > 0) {
+    checks.push({
+      id: 'journal-integrity',
+      status: 'critical',
+      detail: `${invalid.length} journal(s) failed verification: ${invalid.map((entry) => `${entry.id} (${entry.problem})`).join('; ')}`,
+      fix: 'those journals were modified outside this tool; rollback refuses them',
+    })
+  }
   const latest = latestJournal(cwd)
-  if (!latest) {
+  if (latest && !latest.valid) {
+    checks.push({
+      id: 'journal',
+      status: 'critical',
+      detail: `${latest.id} signature problem: ${latest.problem}`,
+      fix: 'the journal was modified by something other than this tool; rollback will refuse it',
+    })
+  } else if (!latest) {
     checks.push({ id: 'journal', status: 'warn', detail: 'no apply journal yet' })
   } else {
     const drift = latest.journal.created.filter((entry) => !existsSync(entry.path)).map((entry) => entry.path)
@@ -163,18 +198,38 @@ export function verify({ cwd, config }) {
 /**
  * Roll back a journal: remove only what it created, never user data.
  */
-export function rollback({ cwd, to, dryRun = false }) {
+export function rollback({ cwd, to, dryRun = false, config }) {
+  if (config === undefined) {
+    try {
+      config = loadConfig({ cwd })
+    } catch {
+      config = null
+    }
+  }
   const entry = to ? findJournal(cwd, to) : latestJournal(cwd)
   if (!entry) throw new Error(to ? `no journal with id ${to}` : 'no apply journal to roll back')
 
   const { journal } = entry
+  if (!entry.valid) {
+    throw new Error(`journal ${entry.id} failed verification (${entry.problem}); refusing to roll back from an untrusted journal`)
+  }
+  if (!Array.isArray(journal.created)) throw new Error(`journal ${journal.id} has no created list`)
   if (journal.dryRun) throw new Error(`journal ${journal.id} was a dry run; nothing to roll back`)
 
+  const roots = rollbackRoots({ cwd, config })
   const removed = []
   const skipped = []
 
   for (const created of [...journal.created].reverse()) {
+    if (!created || typeof created.path !== 'string' || !['dir', 'file'].includes(created.kind)) {
+      skipped.push({ path: String(created?.path ?? '(invalid entry)'), reason: 'malformed journal entry' })
+      continue
+    }
     const path = created.path
+    if (!isWithin(path, roots)) {
+      skipped.push({ path, reason: 'outside the state directory and backup target' })
+      continue
+    }
     if (created.protected) {
       // The journal directory is the audit trail; keeping it is the point.
       skipped.push({ path, reason: 'protected: holds apply journal' })
@@ -185,8 +240,14 @@ export function rollback({ cwd, to, dryRun = false }) {
       continue
     }
     if (created.kind === 'file') {
+      // A file entry without a recorded hash cannot prove it is unchanged, so it
+      // is never deleted.
+      if (typeof created.hash !== 'string' || created.hash === '') {
+        skipped.push({ path, reason: 'file entry has no recorded hash' })
+        continue
+      }
       const current = fileHash(path)
-      if (created.hash && current !== created.hash) {
+      if (current !== created.hash) {
         skipped.push({ path, reason: 'file changed since apply' })
         continue
       }

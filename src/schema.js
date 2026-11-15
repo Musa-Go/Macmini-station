@@ -107,6 +107,9 @@ export function validateConfig(config) {
   else {
     requireBoolean(problems, remote.enabled, 'remoteAccess.enabled')
     requireEnum(problems, remote.provider, REMOTE_PROVIDERS, 'remoteAccess.provider')
+    if (remote.enabled === true && remote.ports === undefined) {
+      push(problems, 'remoteAccess.ports', 'is required (and must not be empty) when remoteAccess.enabled is true')
+    }
     if (remote.ports !== undefined) {
       if (!Array.isArray(remote.ports)) push(problems, 'remoteAccess.ports', 'must be an array of port numbers')
       else {
@@ -158,7 +161,14 @@ export function validateConfig(config) {
         requireString(problems, qq.secretRef, 'notifications.qq.secretRef')
         if (!Array.isArray(qq.allowFrom) || qq.allowFrom.length === 0) {
           push(problems, 'notifications.qq.allowFrom', 'must list at least one openid (otherwise anyone could send commands)')
+        } else {
+          for (const entry of qq.allowFrom) {
+            if (typeof entry !== 'string' || entry.trim() === '') {
+              push(problems, 'notifications.qq.allowFrom', 'entries must be non-empty openids')
+            }
+          }
         }
+        if (qq.to !== undefined) requireString(problems, qq.to, 'notifications.qq.to')
       }
     }
     if (notifications.primary === 'bark') {
@@ -212,6 +222,18 @@ export function validateConfig(config) {
           push(problems, 'agent.command', 'every argv entry must be a non-empty string')
           break
         }
+      }
+    }
+  }
+  if (isPlainObject(agentTaskCfg) && agentTaskCfg.gate !== undefined) {
+    const gate = agentTaskCfg.gate
+    if (!isPlainObject(gate)) push(problems, 'agent.gate', 'must be an object like {"task": "test", "required": true}')
+    else {
+      if (gate.task !== undefined) requireString(problems, gate.task, 'agent.gate.task')
+      if (gate.required !== undefined) requireBoolean(problems, gate.required, 'agent.gate.required')
+      const tasks = isPlainObject(agentTaskCfg.tasks) ? agentTaskCfg.tasks : {}
+      if (typeof gate.task === 'string' && gate.task.trim() !== '' && !Object.hasOwn(tasks, gate.task)) {
+        push(problems, 'agent.gate.task', 'must name a task defined in agent.tasks')
       }
     }
   }
