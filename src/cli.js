@@ -12,6 +12,7 @@ import { buildPlan, formatPlan } from './plan.js'
 import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
 import { describeNotify, notify } from './notify.js'
 import { describeExpose, expose } from './remote.js'
+import { createWorktree, describeWorktrees, listWorktrees, removeWorktree } from './worktree.js'
 import {
   apply,
   describeApply,
@@ -50,6 +51,10 @@ Usage:
                                  Deliver through the configured connector (bark or QQ)
   station expose [--dry-run] [--off] [--json]
                                  Publish remoteAccess.ports on the tailnet via tailscale serve
+  station worktree create --repo <path> [--branch <label>] [--json]
+                                 Prepare an isolated worktree + station/job-* branch (no code runs)
+  station worktree list [--json]
+  station worktree remove <id> [--force] [--json]
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -66,6 +71,25 @@ function parseArgs(argv) {
     else positional.push(arg)
   }
   return { command: positional[0] ?? 'help', flags }
+}
+
+/** The token right after <command>, when it is a subcommand rather than a flag. */
+function positionalEdge(argv, command) {
+  const index = argv.indexOf(command)
+  const next = index >= 0 ? argv[index + 1] : undefined
+  return next && !next.startsWith('--') ? next : undefined
+}
+
+function firstPositionalAfter(argv, command) {
+  const index = argv.indexOf(command)
+  for (let i = index + 1; i < argv.length; i += 1) {
+    const value = argv[i]
+    if (value.startsWith('--')) continue
+    if (value === 'remove') continue
+    if (argv[i - 1] === '--repo' || argv[i - 1] === '--branch' || argv[i - 1] === '--force') continue
+    return value
+  }
+  return undefined
 }
 
 /** The token right after `backup`, if it is a subcommand rather than a flag. */
@@ -199,6 +223,38 @@ export async function main(argv, io) {
         if (json) out(`${JSON.stringify(result, null, 2)}\n`)
         else out(`${describeExpose(result)}\n`)
         return result.ok ? EXIT_OK : EXIT_FAIL
+      }
+
+      case 'worktree': {
+        const sub = positionalEdge(argv, 'worktree')
+        if (sub === 'list' || (!sub && !json)) {
+          const list = listWorktrees({ cwd: io.cwd })
+          if (json) out(`${JSON.stringify({ worktrees: list }, null, 2)}\n`)
+          else out(`${describeWorktrees(list)}\n`)
+          return EXIT_OK
+        }
+        if (sub === 'create') {
+          const job = createWorktree({
+            cwd: io.cwd,
+            repo: flagValue(argv, 'repo'),
+            branch: flagValue(argv, 'branch'),
+          })
+          if (json) out(`${JSON.stringify(job, null, 2)}\n`)
+          else {
+            out(`prepared ${job.id}\n  branch:   ${job.branch}\n  path:     ${job.path}\n  baseline: ${job.base}\n`)
+            out('nothing was executed: this only prepares an isolated worktree\n')
+          }
+          return EXIT_OK
+        }
+        if (sub === 'remove') {
+          const arg = flagValue(argv, '_id') ?? firstPositionalAfter(argv, 'worktree')
+          const result = removeWorktree({ cwd: io.cwd, id: arg, force: flags.has('force') })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(`removed ${result.id} (${result.branch})\n`)
+          return EXIT_OK
+        }
+        err(`${USAGE}`)
+        return EXIT_FAIL
       }
 
       case 'plan': {
