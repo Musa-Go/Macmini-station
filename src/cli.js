@@ -9,6 +9,7 @@ import { loadConfig, writeDefaultConfig, configPath } from './config.js'
 import { runDoctor, formatChecks } from './doctor.js'
 import { loadCapabilities, probeCapabilities, formatCapabilityTable } from './capabilities.js'
 import { buildPlan, formatPlan } from './plan.js'
+import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
 import {
   apply,
   describeApply,
@@ -38,6 +39,11 @@ Usage:
   station verify [--json]        Re-check applied state and config drift
   station rollback [--to <id>] [--dry-run] [--json]
                                  Remove only paths a previous apply created
+  station backup [--dry-run] [--json]
+                                 Back up state + config with a restic you installed (never bundled)
+  station backup check [--json]  Verify repository integrity
+  station backup restore --into <dir> [--json]
+                                 Restore the latest snapshot into a directory (recovery drill)
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -54,6 +60,13 @@ function parseArgs(argv) {
     else positional.push(arg)
   }
   return { command: positional[0] ?? 'help', flags }
+}
+
+/** The token right after `backup`, if it is a subcommand rather than a flag. */
+function positionalSub(argv) {
+  const index = argv.indexOf('backup')
+  const next = index >= 0 ? argv[index + 1] : undefined
+  return next && !next.startsWith('--') ? next : undefined
 }
 
 /** Read a `--key value` pair without turning values into flags. */
@@ -139,6 +152,27 @@ export async function main(argv, io) {
         return EXIT_OK
       }
 
+      case 'backup': {
+        const sub = positionalSub(argv)
+        const config = loadConfig({ cwd: io.cwd })
+        if (sub === 'check') {
+          const result = check({ cwd: io.cwd, config })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(formatBackup(result, 'check'))
+          return result.ok ? EXIT_OK : EXIT_FAIL
+        }
+        if (sub === 'restore') {
+          const result = restore({ cwd: io.cwd, config, into: flagValue(argv, 'into') })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(formatBackup(result, 'restore'))
+          return result.ok ? EXIT_OK : EXIT_FAIL
+        }
+        const result = backup({ cwd: io.cwd, config, dryRun: flags.has('dry-run') })
+        if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+        else out(formatBackup(result, 'backup'))
+        return result.ok ? EXIT_OK : EXIT_FAIL
+      }
+
       case 'plan': {
         const config = loadConfig({ cwd: io.cwd })
         const plan = buildPlan({ config, root: ROOT })
@@ -157,6 +191,36 @@ export async function main(argv, io) {
     else err(`station: ${message}\n`)
     return EXIT_FAIL
   }
+}
+
+function formatBackup(result, kind) {
+  if (!result.ok) {
+    const lines = [`${kind}: failed at ${result.stage ?? 'unknown'}: ${result.error}`]
+    if (result.hint) lines.push(`  fix: ${result.hint}`)
+    return lines.join('\n')
+  }
+  const lines = []
+  if (kind === 'backup') {
+    if (result.dryRun) {
+      lines.push('backup (dry run): nothing written')
+      lines.push(`  restic: ${result.restic}`)
+      lines.push(`  repo:   ${result.repo}${result.wouldInit ? ' (would be initialised)' : ''}`)
+      for (const source of result.wouldBackup ?? []) lines.push(`  source: ${source}`)
+    } else {
+      lines.push(`backup: ${result.repo}`)
+      lines.push(`  restic: ${result.restic}`)
+      if (result.output) lines.push(`  ${result.output}`)
+    }
+  }
+  if (kind === 'check') {
+    lines.push(`check: ${result.repo} ok`)
+    if (result.output) lines.push(`  ${result.output}`)
+  }
+  if (kind === 'restore') {
+    lines.push(`restore: ${result.repo} → ${result.target}`)
+    if (result.summary) lines.push(`  ${result.summary}`)
+  }
+  return lines.join('\n')
 }
 
 export function summarize(items) {

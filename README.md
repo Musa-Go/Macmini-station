@@ -4,8 +4,8 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.3.0` · M0/M1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` 可用并受 CI 保护（Node 20 / 22 / 24）。
-> 备份执行、连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
+> **状态**：`0.4.0` · M0/M1/M2 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> 连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
 
@@ -51,6 +51,13 @@ node bin/station.js apply --dry-run   # 看 apply 会创建什么
 node bin/station.js apply             # 创建目录 + 写日志（不启动任何服务）
 node bin/station.js verify            # 复核已应用状态与配置漂移
 node bin/station.js rollback          # 只删除上次 apply 创建的东西
+
+# 备份（需要你自己装 restic，本工具不捆绑二进制）
+export RESTIC_PASSWORD_FILE=~/.config/restic/password
+node bin/station.js backup --dry-run  # 看会用哪个 restic、备份到哪
+node bin/station.js backup            # 首次自动 init 仓库，然后备份
+node bin/station.js backup check      # 校验仓库完整性
+node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 ```
 
 要求：**Node.js ≥ 20.11**。Apple Silicon macOS 是一等目标；Intel Mac 与其它平台会显式报告为 best-effort。
@@ -67,6 +74,9 @@ node bin/station.js rollback          # 只删除上次 apply 创建的东西
 | `station apply [--dry-run]` | 创建 `.station/` 与备份目标目录，写入 apply 日志 | **只建目录、写日志**；不生成 plist、不启动服务 | 0 / 2 |
 | `station verify` | 复核配置有效性、目录存在性、日志一致性、配置漂移 | 否 | 0 / 1 |
 | `station rollback [--to <id>] [--dry-run]` | 只删除某次 apply 记录为"由它创建"的路径 | 删除空目录 / 未改动的文件 | 0 / 2 |
+| `station backup [--dry-run]` | 用**你安装的** restic 备份 `.station/` + `station.json` | 创建仓库与快照，不启动服务 | 0 / 2 |
+| `station backup check` | `restic check` 校验仓库结构 | 否 | 0 / 2 |
+| `station backup restore --into <dir>` | 恢复最新快照到指定目录（恢复演练） | 只写目标目录 | 0 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
 | `station version` | 打印版本 | 否 | 0 |
 | `station help` | 打印用法 | 否 | 0 |
@@ -85,6 +95,16 @@ node bin/station.js rollback          # 只删除上次 apply 创建的东西
 | 回滚会删我的数据吗 | 不会。只删"由它创建"的路径，且目录必须为空、文件必须未被改动 |
 | 日志会留在哪 | `<cwd>/.station/journal/<id>.json`，回滚记录为 `<id>.rollback.json`；该目录受保护，回滚不删除 |
 | 配置改过怎么办 | `verify` 报 `config-drift`，提示重新 `apply` |
+
+### 备份的边界（M2）
+
+| 问题 | 行为 |
+|---|---|
+| 会自带或下载 restic 吗 | **不会**。只查找已安装的 restic（`RESTIC_BIN` → Homebrew → `/usr/local` → `PATH`），找不到就给出安装命令 |
+| 密码从哪来 | 只读 `RESTIC_PASSWORD_FILE`；密码**不会**出现在 argv、日志或进程环境里 |
+| 第一次跑会怎样 | 仓库不存在就 `restic init`，然后备份 `.station/` 与 `station.json` |
+| 备份范围 | 目前是工具自身的状态与配置，不碰用户项目目录；扩展数据范围属于 M2.1 |
+| 恢复演练 | `backup restore --into <dir>` 恢复最新快照，用来证明备份真的能打开 |
 
 ### 示例输出
 
@@ -212,6 +232,7 @@ src/probes.js             http / path / mount / file-freshness 探针
 src/plan.js               只读规划
 src/apply.js              apply / verify / rollback
 src/state.js              apply 日志（.station/journal）读写
+src/backup.js             restic 检测与 backup / check / restore
 capabilities/*.json       自带能力示例
 profiles/*.json           机器 profile
 schema/station.schema.json 配置契约
@@ -226,7 +247,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 47 个用例，零依赖
+npm test                          # 58 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -266,7 +287,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 |---|---|---|
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
-| **M2** | 备份执行：restic 封装、local/USB/NAS 适配器、`check`、恢复演练 | 计划 |
+| **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
 | **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 计划 |
 | **M4** | Agent 任务执行：独立 worktree、repo allowlist、预算与时限、测试门槛 | 计划 |
 | **M5** | GitHub CI/PR 集成：默认只开 Draft PR，人工合并后才允许发布 | 计划 |
@@ -279,6 +300,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 
 - 不替你 `git init`、不自动推送代码、不读取密钥文件。
 - 能力探测只做 HTTP/路径/挂载/文件新鲜度检查，**不执行 manifest 声明的命令**。
+- **不自带、不下载任何二进制**：restic 由用户自行安装，本工具只调用它。
 - 配置文件不存明文凭据；连接器一律使用系统钥匙串引用。
 - `agent.enabled` 在隔离 worktree、预算与测试门槛实现之前保持 `false`。
 - 报告问题请不要贴 token、密钥或包含个人路径的完整日志。
