@@ -1,15 +1,16 @@
 /**
- * Controlled task execution inside a prepared worktree (M4.2).
+ * Controlled execution inside a prepared worktree (M4.2 / M4.3).
  *
  * Rules from docs/AGENT-JOBS.md:
- *   - only tasks named in `agent.tasks` can run; nothing is inferred;
+ *   - only whitelisted argv arrays run, either a named task (`agent.tasks`) or
+ *     the configured agent command (`agent.command`); nothing is inferred;
  *   - argv arrays are executed directly (no shell), so no interpolation exists;
  *   - each run has a timeout and is killed as a process group on expiry;
  *   - output is captured to a log file and only a bounded tail is reported;
- *   - the environment is reduced to PATH/HOME/LANG, so provider secrets in the
- *     parent process do not leak into a task;
- *   - the result records the exit code, which is the only evidence a later step
- *     (M4.3/M4.4) may use to decide whether a change is acceptable.
+ *   - the environment is reduced to PATH/HOME/LANG/TERM plus the variables the
+ *     caller explicitly adds, so provider secrets in the parent process do not
+ *     leak into a task;
+ *   - the exit code is recorded; it is the only evidence later steps may use.
  */
 
 import { spawn } from 'node:child_process'
@@ -29,7 +30,7 @@ export function runDir(cwd, jobId) {
   return join(jobsDir(cwd), jobId)
 }
 
-function scrubbedEnv(env = process.env) {
+export function scrubbedEnv(env = process.env, extra = {}) {
   // Deliberately narrow: a build may need PATH and HOME, but it must not inherit
   // model/API credentials that happen to live in the parent process.
   return {
@@ -37,6 +38,7 @@ function scrubbedEnv(env = process.env) {
     HOME: env.HOME ?? '',
     LANG: env.LANG ?? 'en_US.UTF-8',
     ...(env.TERM ? { TERM: env.TERM } : {}),
+    ...extra,
   }
 }
 
@@ -47,41 +49,39 @@ export function tailBytes(text, limit = MAX_OUTPUT_TAIL_BYTES) {
   return '…(truncated)\n' + buffer.subarray(buffer.length - limit).toString('utf8')
 }
 
-export function taskLogPath(cwd, jobId, task) {
+export function taskLogPath(cwd, jobId, label) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
-  return join(runDir(cwd, jobId), `${task}-${stamp}.log`)
+  return join(runDir(cwd, jobId), `${label}-${stamp}.log`)
 }
 
 /**
- * Execute one whitelisted task in the worktree. Resolves with a structured
- * result; a non-zero exit is data, not an exception.
+ * Generic guarded process runner. Resolves with a structured result; a non-zero
+ * exit is data, never an exception.
  */
-export function runTask({ cwd, job, task, config, timeoutMs, env = process.env, spawnImpl = spawn }) {
-  const tasks = allowedTasks(config)
-  const argv = tasks[task]
-  if (!Array.isArray(argv) || argv.length === 0) {
-    const known = Object.keys(tasks)
-    throw new Error(
-      known.length === 0
-        ? `no tasks configured; add agent.tasks to station.json (e.g. {"test": ["npm","test"]})`
-        : `unknown task "${task}"; configured tasks: ${known.join(', ')}`,
-    )
-  }
-
-  const seconds = Number(config.agent?.taskTimeoutSeconds ?? DEFAULT_TASK_TIMEOUT_SECONDS)
-  const limitMs = timeoutMs ?? Math.max(1, seconds) * 1000
-  const worktree = job.path
+export function runProcess({
+  cwd,
+  worktree,
+  job,
+  label,
+  argv,
+  timeoutMs,
+  env = process.env,
+  extraEnv = {},
+  spawnImpl = spawn,
+  record = {},
+}) {
+  if (!Array.isArray(argv) || argv.length === 0) throw new Error('argv must be a non-empty array')
   if (!existsSync(worktree)) throw new Error(`worktree is missing: ${worktree}`)
 
   mkdirSync(runDir(cwd, job.id), { recursive: true })
-  const logPath = taskLogPath(cwd, job.id, task)
+  const logPath = taskLogPath(cwd, job.id, label)
   writeFileSync(logPath, `$ ${argv.join(' ')}\n# cwd: ${worktree}\n\n`)
 
   return new Promise((resolve) => {
     const startedAt = Date.now()
     const child = spawnImpl(argv[0], argv.slice(1), {
       cwd: worktree,
-      env: scrubbedEnv(env),
+      env: scrubbedEnv(env, extraEnv),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     })
@@ -109,22 +109,24 @@ export function runTask({ cwd, job, task, config, timeoutMs, env = process.env, 
           child.kill('SIGKILL')
         } catch {}
       }
-    }, limitMs)
+    }, timeoutMs)
 
-    const finish = (code, signal) => {
+    const finish = (code, signal, spawnError) => {
       clearTimeout(timer)
       const durationMs = Date.now() - startedAt
       const result = {
         jobId: job.id,
-        task,
+        kind: record.kind ?? label,
+        label,
         argv,
-        exitCode: timedOut ? null : code,
+        exitCode: timedOut || spawnError ? null : code,
         signal: signal ?? null,
         timedOut,
-        ok: !timedOut && code === 0,
+        ok: !timedOut && !spawnError && code === 0,
         durationMs,
         logPath,
         outputTail: tailBytes(output),
+        ...record.extra,
       }
       try {
         appendFileSync(
@@ -137,16 +139,73 @@ export function runTask({ cwd, job, task, config, timeoutMs, env = process.env, 
 
     child.once('error', (error) => {
       collect(`\n[spawn error] ${error instanceof Error ? error.message : String(error)}\n`)
-      finish(null, null)
+      finish(null, null, error)
     })
     child.once('exit', (code, signal) => finish(code, signal))
+  })
+}
+
+/**
+ * Execute one whitelisted task (M4.2).
+ */
+export function runTask({ cwd, job, task, config, timeoutMs, env = process.env, spawnImpl = spawn }) {
+  const tasks = allowedTasks(config)
+  const argv = tasks[task]
+  if (!Array.isArray(argv) || argv.length === 0) {
+    const known = Object.keys(tasks)
+    throw new Error(
+      known.length === 0
+        ? `no tasks configured; add agent.tasks to station.json (e.g. {"test": ["npm","test"]})`
+        : `unknown task "${task}"; configured tasks: ${known.join(', ')}`,
+    )
+  }
+  const seconds = Number(config.agent?.taskTimeoutSeconds ?? DEFAULT_TASK_TIMEOUT_SECONDS)
+  return runProcess({
+    cwd,
+    worktree: job.path,
+    job,
+    label: task,
+    argv,
+    timeoutMs: timeoutMs ?? Math.max(1, seconds) * 1000,
+    env,
+    spawnImpl,
+    record: { kind: 'task', extra: { task } },
+  })
+}
+
+/** Fill {worktree} / {prompt} placeholders in the configured agent argv. */
+export function renderAgentArgv(command, { worktree, prompt }) {
+  if (!Array.isArray(command) || command.length === 0) {
+    throw new Error('agent.command must be a non-empty argv array, e.g. ["dsh","headless","{prompt}"]')
+  }
+  return command.map((part) =>
+    String(part).replaceAll('{worktree}', worktree).replaceAll('{prompt}', prompt ?? ''),
+  )
+}
+
+/** Execute the configured agent command inside the worktree (M4.3). */
+export async function runAgent({ cwd, job, prompt, config, timeoutMs, env = process.env, spawnImpl = spawn }) {
+  if (typeof prompt !== 'string' || prompt.trim() === '') throw new Error('a prompt is required')
+  const command = config.agent?.command
+  const argv = renderAgentArgv(command, { worktree: job.path, prompt })
+  const seconds = Number(config.agent?.taskTimeoutSeconds ?? DEFAULT_TASK_TIMEOUT_SECONDS)
+  return runProcess({
+    cwd,
+    worktree: job.path,
+    job,
+    label: 'agent',
+    argv,
+    timeoutMs: timeoutMs ?? Math.max(1, seconds) * 1000,
+    env,
+    spawnImpl,
+    record: { kind: 'agent', extra: { promptLength: prompt.length } },
   })
 }
 
 export function describeRun(result) {
   const status = result.timedOut ? 'timeout' : result.ok ? 'passed' : `failed (exit ${result.exitCode})`
   const seconds = (result.durationMs / 1000).toFixed(1)
-  const lines = [`${result.task}: ${status} in ${seconds}s`, `  log: ${result.logPath}`]
+  const lines = [`${result.label ?? result.task}: ${status} in ${seconds}s`, `  log: ${result.logPath}`]
   if (result.outputTail.trim() !== '') {
     lines.push('  --- output tail ---')
     for (const line of result.outputTail.trimEnd().split('\n').slice(-12)) lines.push(`  ${line}`)
