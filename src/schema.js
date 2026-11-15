@@ -7,7 +7,7 @@
  */
 
 const BACKUP_TARGET_TYPES = ['local', 'external-disk', 'smb-restic', 's3-restic']
-const NOTIFICATION_PROVIDERS = ['none', 'qq', 'bark']
+const NOTIFICATION_PROVIDERS = ['none', 'qq', 'bark', 'feishu']
 // Credential references must look like references, never like raw secrets.
 const SECRET_LIKE = /^(sk-|oc_|ghp_|gho_|xox[baprs]-)|^[A-Za-z0-9_-]{32,}$/
 const REMOTE_PROVIDERS = ['tailscale']
@@ -137,12 +137,34 @@ export function validateConfig(config) {
       }
     }
 
-    for (const name of ['qq', 'bark']) {
+    for (const name of ['qq', 'bark', 'feishu']) {
       const connector = notifications[name]
       if (connector === undefined) continue
       if (!isPlainObject(connector)) {
         push(problems, `notifications.${name}`, 'must be an object')
         continue
+      }
+      if (name === 'feishu' && connector.webhookRef !== undefined) {
+        const ref = connector.webhookRef
+        if (typeof ref !== 'string' || ref.trim() === '') {
+          push(problems, 'notifications.feishu.webhookRef', 'must be a non-empty keychain reference')
+        } else if (/^https?:\/\//i.test(ref.trim())) {
+          // The URL embeds the bot token; it is a credential, not a config value.
+          push(
+            problems,
+            'notifications.feishu.webhookRef',
+            'must be a keychain reference, not the webhook URL itself; run: security add-generic-password -s <ref> -w <url>',
+          )
+        } else if (SECRET_LIKE.test(ref.trim())) {
+          push(problems, 'notifications.feishu.webhookRef', 'looks like a raw secret; store the webhook URL in the keychain and reference its name')
+        }
+      }
+      if (name === 'feishu' && connector.signSecretRef !== undefined) {
+        if (typeof connector.signSecretRef !== 'string' || connector.signSecretRef.trim() === '') {
+          push(problems, 'notifications.feishu.signSecretRef', 'must be a non-empty keychain reference')
+        } else if (SECRET_LIKE.test(connector.signSecretRef.trim())) {
+          push(problems, 'notifications.feishu.signSecretRef', 'looks like a raw secret; store it in the keychain and reference its name')
+        }
       }
       if (connector.secretRef !== undefined) {
         if (typeof connector.secretRef !== 'string' || connector.secretRef.trim() === '') {
@@ -180,6 +202,11 @@ export function validateConfig(config) {
         }
         if (qq.to !== undefined) requireString(problems, qq.to, 'notifications.qq.to')
       }
+    }
+    if (notifications.primary === 'feishu') {
+      const feishu = notifications.feishu
+      if (!isPlainObject(feishu)) push(problems, 'notifications.feishu', 'required when primary is feishu')
+      else requireString(problems, feishu.webhookRef, 'notifications.feishu.webhookRef')
     }
     if (notifications.primary === 'bark') {
       const bark = notifications.bark

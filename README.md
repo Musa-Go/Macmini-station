@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.15.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.16.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。M5 提供 CI 与 PR 模板，但**不往你的仓库写 workflow**。M3.4 提供 `station serve`：QQ 入站**只读**指令（`/status`、`/backup status`、`/help`），默认关闭。
 
 ---
@@ -77,7 +77,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | `station backup [--dry-run]` | 用**你安装的** restic 备份 `.station/` + `station.json` | 创建仓库与快照，不启动服务 | 0 / 2 |
 | `station backup check` | `restic check` 校验仓库结构 | 否 | 0 / 2 |
 | `station backup restore --into <dir>` | 恢复最新快照到指定目录（恢复演练） | 只写目标目录 | 0 / 2 |
-| `station notify --title <t> --body <b> [--dry-run]` | 通过已配置的连接器投递（bark / QQ 出站） | 出站 HTTPS；写审计日志 | 0 / 2 |
+| `station notify --title <t> --body <b> [--dry-run]` | 通过已配置的连接器投递（bark / QQ 出站 / 飞书） | 出站 HTTPS；写审计日志 | 0 / 2 |
 | `station expose [--dry-run] [--off]` | 用 `tailscale serve` 把 `remoteAccess.ports` 发布到 tailnet | 改 Tailscale serve 配置；不开防火墙、不碰公网 | 0 / 2 |
 | `station worktree create --repo <path> [--branch <label>]` | 为单个任务准备隔离工作树 + `station/job-*` 分支 | 建 worktree 与分支；**不执行任何命令** | 0 / 2 |
 | `station worktree list` | 列出已准备的任务工作区（id / 分支 / 基线 / 仓库） | 否 | 0 |
@@ -174,8 +174,10 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `storage.backup.include` | 路径数组，默认 `[".station", "station.json"]` | 相对路径按运行目录解析，支持 `~/` 与绝对路径；不存在的项会被跳过 |
 | `storage.backup.retention` | `daily` 1–365 · `weekly` 0–52 · `monthly` 0–24 | 保留策略 |
 | `remoteAccess.enabled` | 布尔 | `false` 时不发布任何端口 |
-| `notifications.primary` | `none` · `qq` · `bark` | 非 `none` 时 `doctor` 明确提示"已配置但未实现"；`qq` 必须同时给 `appId`、`secretRef`、非空 `allowFrom` |
-| `notifications.fallback` | `none` · `qq` · `bark` | 必须与 `primary` 不同 |
+| `notifications.primary` | `none` · `qq` · `bark` · `feishu` | `qq` 必须同时给 `appId`、`secretRef`、非空 `allowFrom`；`feishu` 必须给 `webhookRef` |
+| `notifications.feishu.webhookRef` | 钥匙串条目名 | 条目里存**完整 webhook URL**；配置里直接写 URL 会被校验拒绝（URL 内含 bot token，属于凭据） |
+| `notifications.feishu.signSecretRef` | 钥匙串条目名，可选 | 机器人开了「加签」时必填；签名算法 `base64(HMAC-SHA256(key="<ts>\n<secret>", msg=""))` |
+| `notifications.fallback` | `none` · `qq` · `bark` · `feishu` | 必须与 `primary` 不同 |
 | `notifications.qq.secretRef` | 钥匙串条目名 | **不得填真实密钥**：疑似明文（`sk-`/`oc_`/`ghp_`/32 位以上随机串）会被校验拒绝 |
 | `notifications.bark.secretRef` | 钥匙串条目名 | 同上 |
 | `notifications.inbound.enabled` | 布尔，默认 `false` | 开启后 `station serve` 才允许常驻；需要 `notifications.qq` 完整配置 |
@@ -262,6 +264,7 @@ src/remote.js             tailscale serve 发布（只发明确列出的端口�
 src/serve.js              QQ 入站指令分发（只读、白名单、被动回复、审计）
 src/ws.js                 零依赖 WebSocket 客户端（RFC 6455，供网关使用）
 src/connectors/qq-gateway.js  官方网关会话（hello/identify/心跳/resume/退避）
+src/connectors/feishu.js  飞书自定义机器人（webhook 校验 + 加签 + code 诚实检查）
 src/worktree.js           隔离工作树与任务记录（M4.1，不执行代码）
 src/jobrun.js             受控执行器（M4.2 任务 / M4.3 agent 命令，超时 + 环境剥离）
 src/publish.js            提交 / 推送 / Draft PR（只允许 station/job-* 分支）
@@ -280,7 +283,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 185 个用例，零依赖
+npm test                          # 200 个用例，零依赖
 npm run drill                     # 9 项安全行为演练（gate / journal / 记录信任 / 端口对账 / fail-closed）
 node bin/station.js doctor        # 手动冒烟
 ```
@@ -325,7 +328,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
-| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | ✅ M3.1 校验 / M3.2 bark / M3.3 QQ 出站 / M3.4 QQ 入站（`station serve`，只读）/ M3.5 Tailscale 发布 |
+| **M3** | 连接器：Tailscale、QQ、Bark、飞书，全部 opt-in，密钥走系统钥匙串 | ✅ M3.1 校验 / M3.2 bark / M3.3 QQ 出站 / M3.4 QQ 入站（`station serve`，只读）/ M3.5 Tailscale 发布 / M3.6 飞书出站 |
 | **M4** | Agent 任务执行 | ✅ M4.1 工作树 / M4.2 受控任务 / M4.3 agent 执行 / M4.4 提交与 Draft PR（测试门槛、记录校验已加） |
 | **M5** | CI 与 PR 模板（`templates/`）；Draft PR 由人工转正 | ✅ 模板已合并（工具不代写 workflow） |
 
@@ -353,6 +356,24 @@ security add-generic-password -s station.bark.key -w <你的设备key>
 station notify --title "构建完成" --body "M3.2 已合并" --dry-run   # 先看会不会发
 station notify --title "构建完成" --body "M3.2 已合并"            # 真发
 ```
+
+飞书（自定义机器人，凭据自备）：
+
+```bash
+# webhook URL 本身就是凭据，存钥匙串
+security add-generic-password -s station.feishu.webhook -w 'https://open.feishu.cn/open-apis/bot/v2/hook/<token>'
+# 如果机器人开了「加签」，再加一条
+security add-generic-password -s station.feishu.sign -w '<sign secret>'
+
+# station.json
+# "notifications": { "primary": "feishu",
+#   "feishu": { "webhookRef": "station.feishu.webhook", "signSecretRef": "station.feishu.sign" } }
+
+station notify --title "备份完成" --body "restic 快照已写入" --dry-run
+```
+
+- 只接受 `open.feishu.cn` / `open.larksuite.com` 的 `https://…/open-apis/bot/v2/hook/<token>`，其它地址在发送前就被拒绝（防止把 webhook 当通用 POST 用）。
+- **飞书拒绝时也返回 HTTP 200**，body 里的 `code != 0` 才算失败——本工具检查 `code`，不会把"没送达"报成成功。
 
 QQ 出站（使用者自备凭据）：
 

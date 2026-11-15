@@ -190,3 +190,29 @@ test('notifications.qq.to is accepted and allowFrom entries must be real strings
   config.notifications.qq.allowFrom = ['']
   assert.ok(validateConfig(config).some((p) => p.path === 'notifications.qq.allowFrom'))
 })
+
+test('feishu requires a keychain reference and refuses a raw webhook URL', () => {
+  const config = defaultConfig()
+  config.notifications = { primary: 'feishu' }
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.feishu'))
+
+  config.notifications.feishu = { webhookRef: 'https://open.feishu.cn/open-apis/bot/v2/hook/token' }
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.feishu.webhookRef' && /keychain reference/.test(p.message)))
+
+  config.notifications.feishu = { webhookRef: 'station.feishu.webhook' }
+  assert.deepEqual(validateConfig(config), [])
+
+  config.notifications.feishu = { webhookRef: 'station.feishu.webhook', signSecretRef: 'sk-live-abcdefghijklmnopqrstuvwx' }
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.feishu.signSecretRef'))
+})
+
+test('feishu is an accepted primary and fallback', () => {
+  const config = defaultConfig()
+  config.notifications = {
+    primary: 'bark',
+    fallback: 'feishu',
+    bark: { secretRef: 'station.bark.key' },
+    feishu: { webhookRef: 'station.feishu.webhook' },
+  }
+  assert.deepEqual(validateConfig(config), [])
+})
