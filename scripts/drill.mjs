@@ -216,7 +216,8 @@ await record('expose: ports dropped from the config are unpublished', () => {
   writePublished({ cwd: ws.station, ports: [8443, 8444] })
   const config = defaultConfig()
   config.remoteAccess = { enabled: true, provider: 'tailscale', ports: [8443] }
-  const result = expose({ cwd: ws.station, config, probe })
+  // `exists` is injected so the drill works on a machine without Tailscale.
+  const result = expose({ cwd: ws.station, config, probe, exists: () => true })
   assert(result.ok, `expose should succeed: ${JSON.stringify(result)}`)
   assert(calls.some((call) => call.includes('--https=8444') && call.includes('off')), 'the dropped port should be turned off')
   assertDeepEqual(readPublished({ cwd: ws.station }), [8443], 'published state should record only the live port')
@@ -235,7 +236,7 @@ await record('expose: --off still works after remote access is disabled', () => 
   writePublished({ cwd: ws.station, ports: [8443] })
   const config = defaultConfig()
   config.remoteAccess = { enabled: false, provider: 'tailscale' }
-  const result = expose({ cwd: ws.station, config, off: true, probe })
+  const result = expose({ cwd: ws.station, config, off: true, probe, exists: () => true })
   assert(result.ok, `off should succeed: ${JSON.stringify(result)}`)
   assert(calls.some((call) => call.includes('--https=8443') && call.includes('off')), 'the recorded port should be turned off')
   assertDeepEqual(readPublished({ cwd: ws.station }), [], 'published state should be empty after --off')
