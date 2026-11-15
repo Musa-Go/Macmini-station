@@ -56,6 +56,16 @@ export function resolveTarget(config) {
   return { ok: true, type: target.type, path }
 }
 
+/** Paths to snapshot: config.include, resolved against the station directory. */
+export function resolveSources({ config, cwd, onlyExisting = true }) {
+  const include = config.storage?.backup?.include ?? ['.station', 'station.json']
+  const resolved = include.map((entry) => {
+    const raw = String(entry)
+    return raw.startsWith('~') || raw.startsWith('/') ? resolve(expandHome(raw)) : resolve(cwd, raw)
+  })
+  return onlyExisting ? resolved.filter((p) => existsSync(p)) : resolved
+}
+
 export function repositoryPath({ config, cwd }) {
   const target = resolveTarget(config)
   if (!target.ok) return target
@@ -98,7 +108,7 @@ export function backup({ cwd, config, env = process.env, dryRun = false, resticB
       restic: restic.path,
       repo: repo.repo,
       wouldInit: !repoExists,
-      wouldBackup: [stateDir(cwd), configPathFor(cwd)],
+      wouldBackup: resolveSources({ config, cwd, onlyExisting: false }),
     }
   }
 
@@ -111,7 +121,7 @@ export function backup({ cwd, config, env = process.env, dryRun = false, resticB
     }
   }
 
-  const sources = [stateDir(cwd), configPathFor(cwd)].filter((p) => existsSync(p))
+  const sources = resolveSources({ config, cwd })
   if (sources.length === 0) return { ok: false, stage: 'sources', error: 'nothing to back up yet; run `station apply` first' }
 
   try {

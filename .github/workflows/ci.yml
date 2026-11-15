@@ -56,7 +56,25 @@ jobs:
           "
           shape=$?
 
-          if [ "$doctor" -gt 1 ] || [ "$plan" -gt 1 ] || [ "$shape" -ne 0 ]; then
-            echo "unexpected exit code: doctor=$doctor plan=$plan shape=$shape"
+          # backup must fail closed (exit 2) on a runner without restic, and must
+          # still emit a parseable stage so callers can tell "not installed" apart
+          # from "installed but broken".
+          node bin/station.js backup --dry-run --json > backup.json
+          backup=$?
+          echo "backup exit=$backup"
+          node -e "
+            const b = require('./backup.json');
+            if (b.ok === true) process.exit(0);
+            if (typeof b.stage !== 'string') process.exit(1);
+            if (!/restic/.test(b.stage + ' ' + (b.error ?? ''))) process.exit(1);
+          "
+          backupShape=$?
+
+          if [ "$doctor" -gt 1 ] || [ "$plan" -gt 1 ] || [ "$shape" -ne 0 ] || [ "$backupShape" -ne 0 ]; then
+            echo "unexpected exit code: doctor=$doctor plan=$plan shape=$shape backupShape=$backupShape"
+            exit 1
+          fi
+          if [ "$backup" -ne 0 ] && [ "$backup" -ne 2 ]; then
+            echo "backup must exit 0 (restic present) or 2 (fail closed), got $backup"
             exit 1
           fi

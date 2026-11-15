@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.4.0` · M0/M1/M2 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.4.1` · M0/M1/M2/M2.1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > 连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
@@ -68,7 +68,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 
 | 命令 | 作用 | 是否改动系统 | 退出码 |
 |---|---|---|---|
-| `station doctor` | 检查 Node、平台、配置文件、备份目标、远程访问、通知、Agent、git、容器运行时、profile | 否 | 0 / 1 / 2 |
+| `station doctor` | 检查 Node、平台、配置文件、备份目标、**restic 可用性**、远程访问、通知、Agent、git、容器运行时、profile | 否 | 0 / 1 / 2 |
 | `station status` | 按能力清单逐项探测，输出 `ok`/`warn`/`critical`/`unknown` | 否 | 0 / 1 / 2 |
 | `station plan` | 列出当前 profile 将要配置哪些能力，以及各自前置条件 | 否 | 0 |
 | `station apply [--dry-run]` | 创建 `.station/` 与备份目标目录，写入 apply 日志 | **只建目录、写日志**；不生成 plist、不启动服务 | 0 / 2 |
@@ -103,7 +103,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | 会自带或下载 restic 吗 | **不会**。只查找已安装的 restic（`RESTIC_BIN` → Homebrew → `/usr/local` → `PATH`），找不到就给出安装命令 |
 | 密码从哪来 | 只读 `RESTIC_PASSWORD_FILE`；密码**不会**出现在 argv、日志或进程环境里 |
 | 第一次跑会怎样 | 仓库不存在就 `restic init`，然后备份 `.station/` 与 `station.json` |
-| 备份范围 | 目前是工具自身的状态与配置，不碰用户项目目录；扩展数据范围属于 M2.1 |
+| 备份范围 | 由 `storage.backup.include` 决定，默认只含工具自身的 `.station/` 与 `station.json`；要备用户数据就显式加路径，**默认不碰项目目录** |
 | 恢复演练 | `backup restore --into <dir>` 恢复最新快照，用来证明备份真的能打开 |
 
 ### 示例输出
@@ -160,6 +160,7 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `storage.backup.target.path` | 路径，支持 `~/` | 目标不存在时报 `warn`，不自动创建 |
 | `storage.backup.target.host` / `share` | 字符串 | 仅 `smb-restic` 必填 |
 | `storage.backup.schedule` | 五段 cron | `doctor` 会校验字段数量 |
+| `storage.backup.include` | 路径数组，默认 `[".station", "station.json"]` | 相对路径按运行目录解析，支持 `~/` 与绝对路径；不存在的项会被跳过 |
 | `storage.backup.retention` | `daily` 1–365 · `weekly` 0–52 · `monthly` 0–24 | 保留策略 |
 | `remoteAccess.enabled` | 布尔 | `false` 时不发布任何端口 |
 | `notifications.primary` | `none` · `qq` · `bark` | 非 `none` 时 `doctor` 会明确提示"连接器未实现" |
@@ -247,7 +248,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 58 个用例，零依赖
+npm test                          # 60 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -255,7 +256,7 @@ CI（`.github/workflows/ci.yml`）做三件事：
 
 1. **禁止运行时依赖**：`package.json` 的 `dependencies` 非空即失败；
 2. **Node 20 / 22 / 24 矩阵**跑测试；
-3. **CLI 冒烟**：`doctor --json`、`plan --json` 结构正确，且退出码不超过 1。
+3. **CLI 冒烟**：`doctor --json`、`plan --json` 结构正确且退出码不超过 1；`backup --dry-run --json` 必须"要么成功、要么 fail closed 且带 restic 相关的 stage"。
 
 合并流程与 README 维护要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
