@@ -153,6 +153,16 @@ export function validateConfig(config) {
       }
     }
 
+    if (notifications.inbound !== undefined) {
+      const inbound = notifications.inbound
+      if (!isPlainObject(inbound)) push(problems, 'notifications.inbound', 'must be an object')
+      else {
+        if (inbound.enabled !== undefined) requireBoolean(problems, inbound.enabled, 'notifications.inbound.enabled')
+        if (inbound.enabled === true && notifications.primary !== 'qq' && !isPlainObject(notifications.qq)) {
+          push(problems, 'notifications.inbound.enabled', 'requires a notifications.qq block')
+        }
+      }
+    }
     if (notifications.primary === 'qq') {
       const qq = notifications.qq
       if (!isPlainObject(qq)) push(problems, 'notifications.qq', 'required when primary is qq')

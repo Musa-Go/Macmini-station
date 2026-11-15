@@ -62,7 +62,13 @@ QQ 的 access token 同样按秘密处理：**只在内存中存活一次命令�
 
 ---
 
-## 5. 指令面（仅 QQ）
+## 5. 指令面（仅 QQ，已实现）
+
+```bash
+station serve --check     # 只校验配置，不连接
+station serve             # 常驻，前台运行，由你自己的 launchd 托管
+```
+
 
 M3 只实现**只读**指令，写操作留给 M4：
 
@@ -111,7 +117,7 @@ M3 只实现**只读**指令，写操作留给 M4：
 | **M3.1** | 配置形状 + 校验 + `doctor` 报告连接器状态（全部"未实现"） | 无网络行为，配置错了能明确报错 |
 | **M3.2** ✅ | `bark` 推送（最简单、无入站） | 有去重/限速/分片/审计；失败可见 |
 | **M3.3** ✅ | `qq` 出站推送 + 白名单 | 仅白名单 openid 能收到；秘密不进日志；token 只在内存 |
-| **M3.4 ⏸** | `qq` 入站只读指令 | 暂缓：需要常驻进程，形态待定，见 [DECISIONS-PENDING](DECISIONS-PENDING.md) D1 |
+| **M3.4** ✅ | `qq` 入站只读指令（`station serve`） | 官方 WebSocket 网关；只读指令；被动回复；白名单静默；`notifications.inbound.enabled` 默认关闭 |
 | **M3.5** ✅ | `tailscale` 端口发布（opt-in） | 关闭时保持 local-only；开启后仅 tailnet 可达；只发明确列出的端口 |
 
 M3.1 是纯校验层，可以先做并且零风险；后续每一步都只在用户显式开启对应连接器时生效。

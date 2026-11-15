@@ -95,6 +95,30 @@ export async function sendMessage({ appId, token, openid, content, fetchImpl }) 
  * Deliver one (already chunked) message. Throws QQError; the caller turns it
  * into a structured result and audits it.
  */
+/**
+ * Passive reply: QQ only allows a bot to answer an inbound message it just
+ * received, addressed by that message's id, within a short window. C2C allows up
+ * to 4 replies per inbound message, groups up to 5, hence `msgSeq`.
+ */
+export async function sendReply({ appId, token, target, content, msgId, msgSeq = 1, fetchImpl }) {
+  const path = target.kind === 'group'
+    ? `/v2/groups/${encodeURIComponent(target.groupOpenid)}/messages`
+    : `/v2/users/${encodeURIComponent(target.openid)}/messages`
+  const result = await postJson({
+    url: `${QQ_API_BASE}${path}`,
+    body: { content, msg_type: 0, msg_id: msgId, msg_seq: msgSeq },
+    headers: { authorization: `QQBot ${token}`, 'x-union-appid': appId },
+    fetchImpl,
+  })
+  if (!result.ok) {
+    const detail = result.payload?.message ?? result.error ?? ''
+    throw new QQError('send', `passive reply failed with HTTP ${result.status}${detail ? `: ${String(detail).slice(0, 120)}` : ''}`, {
+      status: result.status,
+    })
+  }
+  return { ok: true, status: result.status }
+}
+
 export async function deliverQQ({ config, secret, content, fetchImpl }) {
   const qq = config.notifications?.qq ?? {}
   if (typeof qq.appId !== 'string' || qq.appId.trim() === '') {

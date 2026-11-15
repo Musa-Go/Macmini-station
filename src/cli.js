@@ -12,6 +12,7 @@ import { buildPlan, formatPlan } from './plan.js'
 import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
 import { describeNotify, notify } from './notify.js'
 import { describeExpose, expose } from './remote.js'
+import { checkServeReadiness, describeReadiness, serve } from './serve.js'
 import { createWorktree, describeWorktrees, listWorktrees, removeWorktree } from './worktree.js'
 import { describeRun, readRuns, runAgent, runTask } from './jobrun.js'
 import { commitJob, describePublish, openDraftPr, pushJob } from './publish.js'
@@ -65,6 +66,8 @@ Usage:
   station worktree push <id> [--json]
   station worktree pr <id> --title <t> [--body <b>] [--json]
                                  Commit / push the job branch / open a Draft PR (drafts only)
+  station serve [--check] [--json]
+                                 Run the QQ inbound command listener (read-only commands)
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -340,6 +343,42 @@ export async function main(argv, io) {
         }
         err(`${USAGE}`)
         return EXIT_FAIL
+      }
+
+      case 'serve': {
+        const config = loadConfig({ cwd: io.cwd })
+        if (flags.has('check')) {
+          const readiness = checkServeReadiness({ config, cwd: io.cwd })
+          if (json) out(`${JSON.stringify(readiness, null, 2)}\n`)
+          else out(`${describeReadiness(readiness)}\n`)
+          return readiness.ok ? EXIT_OK : EXIT_FAIL
+        }
+        if (config.notifications?.inbound?.enabled !== true) {
+          const message = 'inbound commands are disabled; set notifications.inbound.enabled=true to opt in'
+          if (json) out(`${JSON.stringify({ ok: false, stage: 'config', error: message }, null, 2)}\n`)
+          else err(`station: ${message}\n`)
+          return EXIT_FAIL
+        }
+        const session = await serve({ cwd: io.cwd, root: ROOT, config })
+        if (session.ok === false) {
+          if (json) out(`${JSON.stringify(session, null, 2)}\n`)
+          else err(`station: cannot serve\n${session.problems.map((p) => `  - ${p}`).join('\n')}\n`)
+          return EXIT_FAIL
+        }
+        const stop = new Promise((resolve) => {
+          process.once('SIGINT', resolve)
+          process.once('SIGTERM', resolve)
+        })
+        session.on('ready', (info) => {
+          if (json) out(`${JSON.stringify({ ok: true, stage: 'ready', sessionId: info.sessionId }, null, 2)}\n`)
+          else out('serve: connected; listening for allowlisted commands (/help)\n')
+        })
+        session.on('error', (error) => err(`station serve: ${error instanceof Error ? error.message : String(error)}\n`))
+        session.on('stop', () => {})
+        await stop
+        session.stop()
+        out('serve: stopped\n')
+        return EXIT_OK
       }
 
       case 'plan': {

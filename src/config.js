@@ -32,7 +32,7 @@ export function defaultConfig() {
       },
     },
     remoteAccess: { enabled: false, provider: 'tailscale' },
-    notifications: { primary: 'none' },
+    notifications: { primary: 'none', inbound: { enabled: false } },
     agent: { enabled: false, workingDirectory: '' },
     capabilities: { enabled: ['local-backup', 'http-endpoint'] },
   }
