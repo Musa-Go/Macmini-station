@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.2.0` · M0/M1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.3.0` · M0/M1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > 备份执行、连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
@@ -287,12 +287,17 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 
 ## 13. 许可证
 
-目前为 `UNLICENSED`（未选定许可证）。在明确许可证之前请勿对外分发。如果你打算公开复用，请先开 issue 讨论许可证选择。
+[MIT](LICENSE)。可以自由使用、修改、再分发，包括商用；保留版权声明即可。
+
+选择理由：这是个**本地工具**，价值在于被更多人拿去改；MIT 的摩擦最低，且与本仓库的依赖策略（零运行时依赖、不自带二进制）一致。
+
+如果你需要专利授权条款，可以考虑改用 Apache-2.0，但那会让许可证文本和声明义务变重——对本项目没有明显收益。
 
 ---
 
 ## 14. 相关文档
 
+- [`LICENSE`](LICENSE) — MIT
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发流程、提交规范、README 规则
 - [`schema/station.schema.json`](schema/station.schema.json) — 配置契约
 - 设计背景：工作站规划文档（私有仓库外的笔记，不在本仓库内）
