@@ -4,8 +4,8 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.14.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
-> M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。M5 提供 CI 与 PR 模板，但**不往你的仓库写 workflow**。工具不实现 agent 循环，也不自动合并。
+> **状态**：`0.15.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。M5 提供 CI 与 PR 模板，但**不往你的仓库写 workflow**。M3.4 提供 `station serve`：QQ 入站**只读**指令（`/status`、`/backup status`、`/help`），默认关闭。
 
 ---
 
@@ -68,7 +68,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 
 | 命令 | 作用 | 是否改动系统 | 退出码 |
 |---|---|---|---|
-| `station doctor` | 检查 Node、平台、配置文件、备份目标、**restic 可用性**、远程访问、通知、Agent、git、容器运行时、profile | 否 | 0 / 1 / 2 |
+| `station doctor` | 检查 Node、平台、配置文件、备份目标、**restic 可用性**、远程访问、通知（含入站开关）、Agent、**隔离状态**、git、容器运行时、profile | 否 | 0 / 1 / 2 |
 | `station status` | 按能力清单逐项探测，输出 `ok`/`warn`/`critical`/`unknown` | 否 | 0 / 1 / 2 |
 | `station plan` | 列出当前 profile 将要配置哪些能力，以及各自前置条件 | 否 | 0 |
 | `station apply [--dry-run]` | 创建 `.station/` 与备份目标目录，写入 apply 日志 | **只建目录、写日志**；不生成 plist、不启动服务 | 0 / 2 |
@@ -87,6 +87,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | `station worktree commit <id> -m <message>` | 在工作区内提交改动；配置了 gate 时要求先通过测试 | 写 git 历史 | 0 / 2 |
 | `station worktree push <id>` | 推送 `station/job-*` 分支到 `origin` | 推送远端 | 0 / 1 / 2 |
 | `station worktree pr <id> --title <t> [--body <b>]` | 开 **Draft** PR（需要 `gh`） | 创建 Draft PR，从不合并 | 0 / 1 / 2 |
+| `station serve [--check]` | 常驻监听 QQ 入站指令（官方 WebSocket，只读指令，被动回复） | 出站长连接；写审计日志 | 0 / 1 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
 | `station version` | 打印版本 | 否 | 0 |
 | `station help` | 打印用法 | 否 | 0 |
@@ -177,6 +178,7 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `notifications.fallback` | `none` · `qq` · `bark` | 必须与 `primary` 不同 |
 | `notifications.qq.secretRef` | 钥匙串条目名 | **不得填真实密钥**：疑似明文（`sk-`/`oc_`/`ghp_`/32 位以上随机串）会被校验拒绝 |
 | `notifications.bark.secretRef` | 钥匙串条目名 | 同上 |
+| `notifications.inbound.enabled` | 布尔，默认 `false` | 开启后 `station serve` 才允许常驻；需要 `notifications.qq` 完整配置 |
 | `remoteAccess.ports` | 1–65535 整数数组 | 启用远程访问时必须非空 |
 | `agent.enabled` | 布尔 | 默认 `false`；打开后 `doctor`/`plan` 都会标出"执行器未实现" |
 | `agent.tasks` | `{名称: [argv...]}` | **只有这里登记的命令能被执行**；示例 `{"test":["npm","test"]}`；不经过 shell |
@@ -257,6 +259,9 @@ src/backup.js             restic 检测与 backup / check / restore
 src/notify.js             去重/限速/分片/审计 + 连接器分派
 src/connectors/qq.js      QQ 官方机器人出站（token 只在内存）
 src/remote.js             tailscale serve 发布（只发明确列出的端口）
+src/serve.js              QQ 入站指令分发（只读、白名单、被动回复、审计）
+src/ws.js                 零依赖 WebSocket 客户端（RFC 6455，供网关使用）
+src/connectors/qq-gateway.js  官方网关会话（hello/identify/心跳/resume/退避）
 src/worktree.js           隔离工作树与任务记录（M4.1，不执行代码）
 src/jobrun.js             受控执行器（M4.2 任务 / M4.3 agent 命令，超时 + 环境剥离）
 src/publish.js            提交 / 推送 / Draft PR（只允许 station/job-* 分支）
@@ -275,7 +280,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 159 个用例，零依赖
+npm test                          # 185 个用例，零依赖
 npm run drill                     # 9 项安全行为演练（gate / journal / 记录信任 / 端口对账 / fail-closed）
 node bin/station.js doctor        # 手动冒烟
 ```
@@ -320,7 +325,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
-| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 校验、M3.2 bark、M3.3 QQ 出站、M3.5 Tailscale 发布已合并；**M3.4 QQ 入站暂缓**（见 [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) D1） |
+| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | ✅ M3.1 校验 / M3.2 bark / M3.3 QQ 出站 / M3.4 QQ 入站（`station serve`，只读）/ M3.5 Tailscale 发布 |
 | **M4** | Agent 任务执行 | ✅ M4.1 工作树 / M4.2 受控任务 / M4.3 agent 执行 / M4.4 提交与 Draft PR（测试门槛、记录校验已加） |
 | **M5** | CI 与 PR 模板（`templates/`）；Draft PR 由人工转正 | ✅ 模板已合并（工具不代写 workflow） |
 
@@ -333,6 +338,8 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 设计契约见 [`docs/CONNECTORS.md`](docs/CONNECTORS.md)。当前状态：**bark 与 QQ 出站均已可真实投递**；`qq` 入站指令与 `tailscale` 端口发布待做。
 
 **凭据由使用者自己填**：仓库里没有、也不会内置任何 QQ AppID 或密钥。
+
+入站与出站是两条不同的发送路径：出站用主动消息（受额度限制），入站回复用**被动回复**（带 `msg_id`）。不要用出站通道假装在回答某个人的提问——QQ 会拒绝或降级。
 
 远程访问同理：`station expose` 只发布 `remoteAccess.ports` 里**明确列出**的端口，该数组默认空，因此默认一个端口都不发。Tailscale 的登录态由 Tailscale 自己持有，本工具不接触凭据。
 
@@ -364,6 +371,22 @@ station notify --title "构建完成" --body "M3.3 已合并" --dry-run
 `appId` 不是密钥，可写进配置；`AppSecret` 只进钥匙串。收件人默认取 `allowFrom` 第一个，也可用 `to` 显式指定。**access token 只存在内存里**，不落盘——CLI 每次投递多一次 token 请求，换取"磁盘上没有任何长期凭据"。
 
 投递语义（与设计文档一致）：同一条消息 5 分钟内去重、每分钟最多 20 条、超过 1500 字节按码点切分并加 `(i/n)` 序号、无论成败都写一条本地审计（**不含密钥**）。
+
+入站指令（`station serve`）：
+
+```bash
+# 1) 开启入站（默认关闭）
+#  "notifications": { "primary": "qq", "inbound": { "enabled": true },
+#    "qq": { "appId": "...", "secretRef": "...", "allowFrom": ["<你的 openid>"] } }
+
+station serve --check     # 只校验配置与凭据要求，不连接
+station serve             # 常驻；用你自己的 launchd 托管，工具不注册服务
+```
+
+- **只读指令**：`/status`、`/backup status`、`/help`；其它请求回"不支持"并指向 `station worktree` 的受控入口。
+- **白名单静默**：不在 `allowFrom` 里的 openid 直接忽略，不回复也不提示。
+- **被动回复**：带入站 `msg_id`，单聊最多 4 条、群最多 5 条——QQ 不允许机器人自由发言。
+- 审计写 `.station/serve.log`，只记状态与消息 id，**不记消息内容**。
 
 三条不会变的约束：
 

@@ -237,6 +237,17 @@
               "description": "keychain entry name, never the secret itself"
             }
           }
+        },
+        "inbound": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "QQ inbound command listener (`station serve`); strictly read-only commands",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "defaults to false"
+            }
+          }
         }
       }
     },

@@ -8,7 +8,7 @@
 
 ## D1. QQ 入站指令（M3.4）是否需要常驻进程
 
-**状态**：⏸ 暂缓，等判断
+**状态**：✅ 已决定（2026-11-15）：**方案 A（自实现官方 WebSocket 客户端）+ 常驻形态 A（`station serve`，由使用者的 launchd 托管）**
 **记录时间**：2026-11-15
 **相关文档**：[CONNECTORS.md](CONNECTORS.md) 第 5 节
 
@@ -29,9 +29,17 @@ M3.1–M3.3 已完成配置校验、bark 出站、QQ 出站。剩下的入站指
 | **C. 完全不做入站** | 只保留出站推送，指令走本机 CLI | 失去"手机上问一句就能查状态"的核心价值 |
 | **D. 交给现有 MQ/机器人框架** | 把入站委托给外部程序，本工具只提供查询接口 | 增加外部依赖；但能复用成熟的重连与鉴权 |
 
-### 默认行为（当前）
+### 结论（2026-11-15）
 
-入站功能**不存在**：配置里 `notifications.primary: "qq"` 只会启用出站推送；没有任何端口监听或长连接。README 与 CONNECTORS 都明确写了这一点。
+选择 **A + A**：
+
+- 传输：自己实现官方 WebSocket 网关客户端（`src/ws.js` + `src/connectors/qq-gateway.js`），零运行时依赖，不引入 Python SDK 或第三方机器人框架；
+- 进程：`station serve` 前台运行，生命周期交给使用者自己的 launchd，工具**不**自动注册系统服务；
+- 指令面严格只读：`/status`、`/backup status`、`/help`；写操作仍走 `station worktree` 的受控入口；
+- 回复走**被动回复**（带入站 `msg_id`，C2C 最多 4 条、群最多 5 条）；
+- 未在 `allowFrom` 里的 openid 一律静默忽略，不回复、不提示。
+
+默认仍是关闭：`notifications.inbound.enabled` 默认 `false`。
 
 ### 判断时建议先回答
 

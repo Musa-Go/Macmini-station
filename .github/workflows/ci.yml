@@ -87,8 +87,12 @@ jobs:
           "
           notifyShape=$?
 
-          if [ "$doctor" -gt 1 ] || [ "$plan" -gt 1 ] || [ "$shape" -ne 0 ] || [ "$backupShape" -ne 0 ] || [ "$notifyShape" -ne 0 ]; then
-            echo "unexpected exit code: doctor=$doctor plan=$plan shape=$shape backupShape=$backupShape notifyShape=$notifyShape"
+          if [ "$doctor" -gt 1 ] || [ "$plan" -gt 1 ] || [ "$shape" -ne 0 ] || [ "$backupShape" -ne 0 ] || [ "$notifyShape" -ne 0 ] || [ "$serveShape" -ne 0 ]; then
+            echo "unexpected exit code: doctor=$doctor plan=$plan shape=$shape backupShape=$backupShape notifyShape=$notifyShape serveShape=$serveShape"
+            exit 1
+          fi
+          if [ "$serve" -ne 0 ] && [ "$serve" -ne 2 ]; then
+            echo "serve --check must exit 0 or 2, got $serve"
             exit 1
           fi
           if [ "$notify" -ne 2 ]; then
@@ -99,3 +103,15 @@ jobs:
             echo "backup must exit 0 (restic present) or 2 (fail closed), got $backup"
             exit 1
           fi
+
+          # serve --check must fail closed with a list of missing pieces instead of
+          # pretending the listener is ready.
+          node bin/station.js serve --check --json > serve.json
+          serve=$?
+          echo "serve check exit=$serve"
+          node -e "
+            const s = require('./serve.json');
+            if (s.ok === true) process.exit(0);
+            if (!Array.isArray(s.problems) || s.problems.length === 0) process.exit(1);
+          "
+          serveShape=$?

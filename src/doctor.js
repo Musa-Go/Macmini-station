@@ -216,11 +216,12 @@ function checkNotifications({ config }) {
       fix: `add notifications.${primary} with a keychain secretRef before enabling it`,
     }
   }
+  const inbound = notifications.inbound?.enabled === true
   return {
     id: 'notifications',
     title: 'Notifications',
     status: 'ok',
-    detail: `${primary}${fallback}: adapter ready (secret read from the keychain at send time)`,
+    detail: `${primary}${fallback}: outbound ready${inbound ? '; inbound listener enabled (station serve, read-only)' : ''}`,
   }
 }
 
