@@ -4,54 +4,124 @@
   "title": "Macmini-station configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "machine", "storage", "remoteAccess", "notifications", "agent", "capabilities"],
+  "required": [
+    "schemaVersion",
+    "machine",
+    "storage",
+    "remoteAccess",
+    "notifications",
+    "agent",
+    "capabilities"
+  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": {
+      "const": 1
+    },
     "machine": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["displayName", "profile"],
+      "required": [
+        "displayName",
+        "profile"
+      ],
       "properties": {
-        "displayName": { "type": "string", "minLength": 1 },
-        "profile": { "type": "string", "minLength": 1, "description": "id of a file in profiles/" }
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "id of a file in profiles/"
+        }
       }
     },
     "storage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["backup"],
+      "required": [
+        "backup"
+      ],
       "properties": {
         "backup": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "target", "schedule", "retention"],
+          "required": [
+            "enabled",
+            "target",
+            "schedule",
+            "retention"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
+            "enabled": {
+              "type": "boolean"
+            },
             "target": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["type", "path"],
+              "required": [
+                "type",
+                "path"
+              ],
               "properties": {
-                "type": { "enum": ["local", "external-disk", "smb-restic", "s3-restic"] },
-                "path": { "type": "string", "minLength": 1 },
-                "host": { "type": "string", "description": "required for smb-restic" },
-                "share": { "type": "string", "description": "required for smb-restic" }
+                "type": {
+                  "enum": [
+                    "local",
+                    "external-disk",
+                    "smb-restic",
+                    "s3-restic"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "host": {
+                  "type": "string",
+                  "description": "required for smb-restic"
+                },
+                "share": {
+                  "type": "string",
+                  "description": "required for smb-restic"
+                }
               }
             },
-            "schedule": { "type": "string", "pattern": "^\\s*\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s*$" },
+            "schedule": {
+              "type": "string",
+              "pattern": "^\\s*\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s*$"
+            },
             "include": {
               "type": "array",
               "description": "paths (absolute, or relative to the station directory) to snapshot; defaults to ['.station', 'station.json']",
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "retention": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["daily", "weekly", "monthly"],
+              "required": [
+                "daily",
+                "weekly",
+                "monthly"
+              ],
               "properties": {
-                "daily": { "type": "integer", "minimum": 1, "maximum": 365 },
-                "weekly": { "type": "integer", "minimum": 0, "maximum": 52 },
-                "monthly": { "type": "integer", "minimum": 0, "maximum": 24 }
+                "daily": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 365
+                },
+                "weekly": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 52
+                },
+                "monthly": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 24
+                }
               }
             }
           }
@@ -61,35 +131,117 @@
     "remoteAccess": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "provider"],
+      "required": [
+        "enabled",
+        "provider"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "provider": { "enum": ["tailscale"] }
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "enum": [
+            "tailscale"
+          ]
+        },
+        "ports": {
+          "type": "array",
+          "description": "ports to publish on the tailnet when enabled",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
       }
     },
     "notifications": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["primary"],
+      "required": [
+        "primary"
+      ],
       "properties": {
-        "primary": { "enum": ["none", "qq", "bark"] }
+        "primary": {
+          "enum": [
+            "none",
+            "qq",
+            "bark"
+          ]
+        },
+        "fallback": {
+          "enum": [
+            "none",
+            "qq",
+            "bark"
+          ]
+        },
+        "qq": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "appId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "secretRef": {
+              "type": "string",
+              "minLength": 1,
+              "description": "keychain entry name, never the secret itself"
+            },
+            "allowFrom": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "bark": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretRef": {
+              "type": "string",
+              "minLength": 1,
+              "description": "keychain entry name, never the secret itself"
+            }
+          }
+        }
       }
     },
     "agent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "workingDirectory"],
+      "required": [
+        "enabled",
+        "workingDirectory"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "workingDirectory": { "type": "string" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "workingDirectory": {
+          "type": "string"
+        }
       }
     },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+        "enabled": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
       }
     }
   }

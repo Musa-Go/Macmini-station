@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.4.1` · M0/M1/M2/M2.1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.5.0` · M0/M1/M2/M2.1/M3.1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > 连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
@@ -163,7 +163,11 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `storage.backup.include` | 路径数组，默认 `[".station", "station.json"]` | 相对路径按运行目录解析，支持 `~/` 与绝对路径；不存在的项会被跳过 |
 | `storage.backup.retention` | `daily` 1–365 · `weekly` 0–52 · `monthly` 0–24 | 保留策略 |
 | `remoteAccess.enabled` | 布尔 | `false` 时不发布任何端口 |
-| `notifications.primary` | `none` · `qq` · `bark` | 非 `none` 时 `doctor` 会明确提示"连接器未实现" |
+| `notifications.primary` | `none` · `qq` · `bark` | 非 `none` 时 `doctor` 明确提示"已配置但未实现"；`qq` 必须同时给 `appId`、`secretRef`、非空 `allowFrom` |
+| `notifications.fallback` | `none` · `qq` · `bark` | 必须与 `primary` 不同 |
+| `notifications.qq.secretRef` | 钥匙串条目名 | **不得填真实密钥**：疑似明文（`sk-`/`oc_`/`ghp_`/32 位以上随机串）会被校验拒绝 |
+| `notifications.bark.secretRef` | 钥匙串条目名 | 同上 |
+| `remoteAccess.ports` | 1–65535 整数数组 | 启用远程访问时必须非空 |
 | `agent.enabled` | 布尔 | 默认 `false`；打开后 `doctor`/`plan` 都会标出"执行器未实现" |
 | `capabilities.enabled` | 能力 id 数组 | 决定 `status` 探测哪些；重复 id 会被校验拒绝 |
 
@@ -248,7 +252,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 60 个用例，零依赖
+npm test                          # 66 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -289,11 +293,23 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
-| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 计划 |
+| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1（配置与校验）已合并；M3.2+（真实推送）待做 |
 | **M4** | Agent 任务执行：独立 worktree、repo allowlist、预算与时限、测试门槛 | 计划 |
 | **M5** | GitHub CI/PR 集成：默认只开 Draft PR，人工合并后才允许发布 | 计划 |
 
 后续里程碑都遵守同一条底线：**任何"会改变系统"的动作都必须先 `plan` 再 `apply`，并且可回滚。**
+
+---
+
+## 11.5 连接器（M3）
+
+设计契约见 [`docs/CONNECTORS.md`](docs/CONNECTORS.md)。当前状态：**只有配置校验与 doctor 提示，没有任何真实网络推送**。
+
+三条不会变的约束：
+
+1. **凭据只存钥匙串引用**：配置里写 `secretRef`，校验器会拒绝任何"看起来像真实密钥"的值。
+2. **全部 opt-in**：`notifications.primary: "none"`、`remoteAccess.enabled: false` 是默认，未配置时核心功能完整可用。
+3. **推送通道与指令通道分离**：收到消息不等于被授权执行操作；写操作属于 M4 的受控任务入口。
 
 ---
 
@@ -321,6 +337,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 ## 14. 相关文档
 
 - [`LICENSE`](LICENSE) — MIT
+- [`docs/CONNECTORS.md`](docs/CONNECTORS.md) — M3 连接器设计契约
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发流程、提交规范、README 规则
 - [`schema/station.schema.json`](schema/station.schema.json) — 配置契约
 - 设计背景：工作站规划文档（私有仓库外的笔记，不在本仓库内）

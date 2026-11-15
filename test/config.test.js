@@ -92,6 +92,61 @@ test('schema validates the optional backup include list', () => {
   assert.ok(validateConfig(notArray).some((p) => p.path === 'storage.backup.include'))
 })
 
+test('connector config: qq requires appId, keychain ref and an allowlist', () => {
+  const config = defaultConfig()
+  config.notifications.primary = 'qq'
+  const problems = validateConfig(config)
+  assert.ok(problems.some((p) => p.path === 'notifications.qq'))
+})
+
+test('connector config: a raw-looking secretRef is rejected', () => {
+  const config = defaultConfig()
+  config.notifications = {
+    primary: 'bark',
+    bark: { secretRef: 'sk-live-abcdefghijklmnopqrstuvwxyz123456' },
+  }
+  const problems = validateConfig(config)
+  assert.ok(problems.some((p) => p.path === 'notifications.bark.secretRef' && /raw secret/.test(p.message)))
+})
+
+test('connector config: fallback must differ from primary', () => {
+  const config = defaultConfig()
+  config.notifications = { primary: 'bark', fallback: 'bark', bark: { secretRef: 'station.bark.key' } }
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.fallback'))
+})
+
+test('connector config: qq requires a non-empty allowlist', () => {
+  const config = defaultConfig()
+  config.notifications = {
+    primary: 'qq',
+    qq: { appId: '102880683', secretRef: 'station.qq.appSecret', allowFrom: [] },
+  }
+  assert.ok(validateConfig(config).some((p) => p.path === 'notifications.qq.allowFrom'))
+})
+
+test('connector config: a valid qq + bark setup passes', () => {
+  const config = defaultConfig()
+  config.notifications = {
+    primary: 'qq',
+    fallback: 'bark',
+    qq: { appId: '102880683', secretRef: 'station.qq.appSecret', allowFrom: ['openid-1'] },
+    bark: { secretRef: 'station.bark.key' },
+  }
+  assert.deepEqual(validateConfig(config), [])
+})
+
+test('remote access ports must be valid and non-empty when enabled', () => {
+  const config = defaultConfig()
+  config.remoteAccess = { enabled: true, provider: 'tailscale', ports: [] }
+  assert.ok(validateConfig(config).some((p) => p.path === 'remoteAccess.ports'))
+
+  config.remoteAccess.ports = [0]
+  assert.ok(validateConfig(config).some((p) => p.path === 'remoteAccess.ports'))
+
+  config.remoteAccess.ports = [8443]
+  assert.deepEqual(validateConfig(config), [])
+})
+
 test('schema rejects duplicate capability ids', () => {
   const config = defaultConfig()
   config.capabilities.enabled = ['a', 'a']

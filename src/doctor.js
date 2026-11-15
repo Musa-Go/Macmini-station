@@ -188,16 +188,23 @@ function checkRemoteAccess({ config }) {
 }
 
 function checkNotifications({ config }) {
-  const primary = config.notifications?.primary ?? 'none'
+  const notifications = config.notifications ?? {}
+  const primary = notifications.primary ?? 'none'
   if (primary === 'none') {
     return { id: 'notifications', title: 'Notifications', status: 'ok', detail: 'disabled' }
   }
+  // Config can be valid before the connector exists; say so instead of implying
+  // that messages would actually be delivered.
+  const configured = typeof notifications[primary] === 'object' && notifications[primary] !== null
+  const fallback = notifications.fallback && notifications.fallback !== 'none' ? ` (fallback ${notifications.fallback})` : ''
   return {
     id: 'notifications',
     title: 'Notifications',
     status: 'warn',
-    detail: `${primary} adapter not implemented in 0.1`,
-    fix: 'keep "none" until the connector milestone lands',
+    detail: `${primary}${fallback}: configured but not implemented yet`,
+    fix: configured
+      ? 'connector delivery lands in M3.2+; until then keep "none" if you need silence'
+      : `add notifications.${primary} with a keychain secretRef before enabling it`,
   }
 }
 

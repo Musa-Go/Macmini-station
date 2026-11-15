@@ -1,6 +1,6 @@
 {
   "name": "macmini-station",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "description": "Local-first Mac mini workstation toolkit: installable profiles, capability registry, health probes and optional integrations (NAS, Tailscale, QQ, agents).",
   "type": "module",
