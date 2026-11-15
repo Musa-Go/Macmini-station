@@ -4,8 +4,8 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.11.0` · M0/M1/M2/M2.1/M3.1/M3.2/M3.3/M3.5/M4.1–M4.4 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
-> M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。**工具本身不实现 agent 循环，也不自动合并。**
+> **状态**：`0.12.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。M5 提供 CI 与 PR 模板，但**不往你的仓库写 workflow**。工具不实现 agent 循环，也不自动合并。
 
 ---
 
@@ -314,7 +314,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
 | **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 校验、M3.2 bark、M3.3 QQ 出站、M3.5 Tailscale 发布已合并；**M3.4 QQ 入站暂缓**（见 [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) D1） |
 | **M4** | Agent 任务执行 | ✅ M4.1 隔离工作区 / M4.2 受控任务 / M4.3 agent 执行 / M4.4 提交与 Draft PR |
-| **M5** | GitHub CI/PR 集成：默认只开 Draft PR，人工合并后才允许发布 | 计划 |
+| **M5** | CI 与 PR 模板（`templates/`）；Draft PR 由人工转正 | ✅ 模板已合并（工具不代写 workflow） |
 
 后续里程碑都遵守同一条底线：**任何"会改变系统"的动作都必须先 `plan` 再 `apply`，并且可回滚。**
 
@@ -390,6 +390,7 @@ station notify --title "构建完成" --body "M3.3 已合并" --dry-run
 
 - [`LICENSE`](LICENSE) — MIT
 - [`docs/CONNECTORS.md`](docs/CONNECTORS.md) — M3 连接器设计契约
+- [`templates/README.md`](templates/README.md) — CI 与 PR 模板（复制到你自己的项目）
 - [`docs/AGENT-JOBS.md`](docs/AGENT-JOBS.md) — M4 任务契约（隔离、预算、门槛、禁止直推）
 - [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) — 刻意留给后续判断的决策（QQ 入站形态等）
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发流程、提交规范、README 规则
