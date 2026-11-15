@@ -103,9 +103,6 @@ export function expose({ cwd, config, dryRun = false, off = false, probe = defau
     return { ok: false, stage: 'config', error: 'remoteAccess.ports is empty; list the ports to publish explicitly' }
   }
 
-  const tailscale = findTailscale({ probe })
-  if (!tailscale.ok) return { ok: false, stage: 'tailscale', ...tailscale }
-
   let toServe = []
   let toOff = []
   if (off) {
@@ -114,12 +111,16 @@ export function expose({ cwd, config, dryRun = false, off = false, probe = defau
     // ports it never served.
     toOff = [...new Set([...published, ...(enabled ? wanted : [])])]
     if (toOff.length === 0) {
+      // Nothing to do, so do not even require the Tailscale CLI to be present.
       return { ok: true, off: true, ports: [], results: [], note: 'nothing recorded as published; nothing to unpublish' }
     }
   } else {
     toServe = wanted
     toOff = published.filter((port) => !wanted.includes(port))
   }
+
+  const tailscale = findTailscale({ probe })
+  if (!tailscale.ok) return { ok: false, stage: 'tailscale', ...tailscale }
 
   const online = tailnetOnline({ path: tailscale.path, probe })
   if (!online.ok && toServe.length > 0) {
