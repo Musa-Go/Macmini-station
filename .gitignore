@@ -1,5 +1,6 @@
 node_modules/
 station.json
+.station/
 .capabilities/
 .DS_Store
 *.log
