@@ -1,0 +1,39 @@
+# Copy this file into your own project as .github/workflows/ci.yml and replace
+# the test commands with your own. macmini-station does not install this for you:
+# editing CI configuration is a human decision, not an agent action.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test
+
+      # Optional: fail if a runtime dependency sneaks in. Remove this step if your
+      # project legitimately needs dependencies.
+      # - name: No runtime dependencies
+      #   run: |
+      #     node -e "const p=require('./package.json');const d=Object.keys(p.dependencies??{});if(d.length){console.error('runtime deps:',d);process.exit(1)}"
