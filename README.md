@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.5.0` · M0/M1/M2/M2.1/M3.1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.6.0` · M0/M1/M2/M2.1/M3.1/M3.2 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > 连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
@@ -77,6 +77,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | `station backup [--dry-run]` | 用**你安装的** restic 备份 `.station/` + `station.json` | 创建仓库与快照，不启动服务 | 0 / 2 |
 | `station backup check` | `restic check` 校验仓库结构 | 否 | 0 / 2 |
 | `station backup restore --into <dir>` | 恢复最新快照到指定目录（恢复演练） | 只写目标目录 | 0 / 2 |
+| `station notify --title <t> --body <b> [--dry-run]` | 通过已配置的连接器投递（M3.2 支持 bark） | 出站 HTTPS；写审计日志 | 0 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
 | `station version` | 打印版本 | 否 | 0 |
 | `station help` | 打印用法 | 否 | 0 |
@@ -252,7 +253,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 66 个用例，零依赖
+npm test                          # 80 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -293,7 +294,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
-| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1（配置与校验）已合并；M3.2+（真实推送）待做 |
+| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 配置校验、M3.2 bark 投递已合并；QQ 与 Tailscale 待做 |
 | **M4** | Agent 任务执行：独立 worktree、repo allowlist、预算与时限、测试门槛 | 计划 |
 | **M5** | GitHub CI/PR 集成：默认只开 Draft PR，人工合并后才允许发布 | 计划 |
 
@@ -303,7 +304,20 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 
 ## 11.5 连接器（M3）
 
-设计契约见 [`docs/CONNECTORS.md`](docs/CONNECTORS.md)。当前状态：**只有配置校验与 doctor 提示，没有任何真实网络推送**。
+设计契约见 [`docs/CONNECTORS.md`](docs/CONNECTORS.md)。当前状态：**bark 已可真实投递**（M3.2）；`qq` 与 `tailscale` 仍只有配置校验。
+
+```bash
+# 把密钥存进钥匙串（只存一次，配置里只写引用名）
+security add-generic-password -s station.bark.key -w <你的设备key>
+
+# 配置
+# "notifications": { "primary": "bark", "bark": { "secretRef": "station.bark.key" } }
+
+station notify --title "构建完成" --body "M3.2 已合并" --dry-run   # 先看会不会发
+station notify --title "构建完成" --body "M3.2 已合并"            # 真发
+```
+
+投递语义（与设计文档一致）：同一条消息 5 分钟内去重、每分钟最多 20 条、超过 1500 字节按码点切分并加 `(i/n)` 序号、无论成败都写一条本地审计（**不含密钥**）。
 
 三条不会变的约束：
 

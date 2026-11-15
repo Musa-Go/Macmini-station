@@ -10,6 +10,7 @@ import { runDoctor, formatChecks } from './doctor.js'
 import { loadCapabilities, probeCapabilities, formatCapabilityTable } from './capabilities.js'
 import { buildPlan, formatPlan } from './plan.js'
 import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
+import { describeNotify, notify } from './notify.js'
 import {
   apply,
   describeApply,
@@ -44,6 +45,8 @@ Usage:
   station backup check [--json]  Verify repository integrity
   station backup restore --into <dir> [--json]
                                  Restore the latest snapshot into a directory (recovery drill)
+  station notify --title <t> --body <b> [--dry-run] [--json]
+                                 Deliver through the configured connector (bark in M3.2)
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -170,6 +173,20 @@ export async function main(argv, io) {
         const result = backup({ cwd: io.cwd, config, dryRun: flags.has('dry-run') })
         if (json) out(`${JSON.stringify(result, null, 2)}\n`)
         else out(formatBackup(result, 'backup'))
+        return result.ok ? EXIT_OK : EXIT_FAIL
+      }
+
+      case 'notify': {
+        const config = loadConfig({ cwd: io.cwd })
+        const result = await notify({
+          cwd: io.cwd,
+          config,
+          title: flagValue(argv, 'title') ?? '',
+          body: flagValue(argv, 'body') ?? '',
+          dryRun: flags.has('dry-run'),
+        })
+        if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+        else out(`${describeNotify(result)}\n`)
         return result.ok ? EXIT_OK : EXIT_FAIL
       }
 
