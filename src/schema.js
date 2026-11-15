@@ -180,6 +180,34 @@ export function validateConfig(config) {
     }
   }
 
+  const agentTaskCfg = config.agent
+  if (isPlainObject(agentTaskCfg) && agentTaskCfg.tasks !== undefined) {
+    if (!isPlainObject(agentTaskCfg.tasks)) push(problems, 'agent.tasks', 'must be an object of named commands')
+    else {
+      for (const [name, argv] of Object.entries(agentTaskCfg.tasks)) {
+        if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) {
+          push(problems, `agent.tasks.${name}`, 'task names must start with a letter and use letters, digits, dash or underscore')
+          continue
+        }
+        if (!Array.isArray(argv) || argv.length === 0) {
+          push(problems, `agent.tasks.${name}`, 'must be a non-empty argv array, e.g. ["npm","test"]')
+          continue
+        }
+        for (const part of argv) {
+          if (typeof part !== 'string' || part === '') {
+            push(problems, `agent.tasks.${name}`, 'every argv entry must be a non-empty string')
+            break
+          }
+        }
+      }
+    }
+  }
+  if (isPlainObject(agentTaskCfg) && agentTaskCfg.taskTimeoutSeconds !== undefined) {
+    if (!Number.isInteger(agentTaskCfg.taskTimeoutSeconds) || agentTaskCfg.taskTimeoutSeconds < 1 || agentTaskCfg.taskTimeoutSeconds > 3600) {
+      push(problems, 'agent.taskTimeoutSeconds', 'must be an integer between 1 and 3600')
+    }
+  }
+
   const capabilities = config.capabilities
   if (!isPlainObject(capabilities)) push(problems, 'capabilities', 'must be an object')
   else if (!Array.isArray(capabilities.enabled)) {

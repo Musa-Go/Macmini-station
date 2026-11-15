@@ -13,6 +13,7 @@ import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
 import { describeNotify, notify } from './notify.js'
 import { describeExpose, expose } from './remote.js'
 import { createWorktree, describeWorktrees, listWorktrees, removeWorktree } from './worktree.js'
+import { describeRun, readRuns, runTask } from './jobrun.js'
 import {
   apply,
   describeApply,
@@ -55,6 +56,8 @@ Usage:
                                  Prepare an isolated worktree + station/job-* branch (no code runs)
   station worktree list [--json]
   station worktree remove <id> [--force] [--json]
+  station worktree run <id> --task <name> [--json]
+                                 Run one whitelisted task (agent.tasks) inside the worktree
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -80,13 +83,14 @@ function positionalEdge(argv, command) {
   return next && !next.startsWith('--') ? next : undefined
 }
 
-function firstPositionalAfter(argv, command) {
+function firstPositionalAfter(argv, command, skip = []) {
   const index = argv.indexOf(command)
+  const skipBefore = new Set(['--repo', '--branch', '--force', '--task'])
   for (let i = index + 1; i < argv.length; i += 1) {
     const value = argv[i]
     if (value.startsWith('--')) continue
-    if (value === 'remove') continue
-    if (argv[i - 1] === '--repo' || argv[i - 1] === '--branch' || argv[i - 1] === '--force') continue
+    if (skip.includes(value)) continue
+    if (skipBefore.has(argv[i - 1])) continue
     return value
   }
   return undefined
@@ -245,6 +249,18 @@ export async function main(argv, io) {
             out('nothing was executed: this only prepares an isolated worktree\n')
           }
           return EXIT_OK
+        }
+        if (sub === 'run') {
+          const id = firstPositionalAfter(argv, 'worktree', ['run', '--task'])
+          const task = flagValue(argv, 'task')
+          if (!id) throw new Error('worktree id is required: station worktree run <id> --task <name>')
+          if (!task) throw new Error('--task is required; configured tasks come from agent.tasks')
+          const job = listWorktrees({ cwd: io.cwd }).find((item) => item.id === id)
+          if (!job) throw new Error(`no worktree record with id ${id}`)
+          const result = await runTask({ cwd: io.cwd, job, task, config: loadConfig({ cwd: io.cwd }) })
+          if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+          else out(`${describeRun(result)}\n`)
+          return result.ok ? EXIT_OK : EXIT_WARN
         }
         if (sub === 'remove') {
           const arg = flagValue(argv, '_id') ?? firstPositionalAfter(argv, 'worktree')

@@ -4,8 +4,8 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.9.0` · M0/M1/M2/M2.1/M3.1/M3.2/M3.3/M3.5/M4.1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
-> M4.1 已合并（隔离工作区与任务记录，**不执行任何代码**）；Agent 改码、命令执行与 Draft PR 仍在路线图上，见 [路线图](#路线图)。
+> **状态**：`0.10.0` · M0/M1/M2/M2.1/M3.1/M3.2/M3.3/M3.5/M4.1/M4.2 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> M4.1（隔离工作区）与 M4.2（受控任务执行）已合并；**Agent 改码与 Draft PR 仍在路线图上**，见 [路线图](#路线图)。
 
 ---
 
@@ -82,6 +82,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | `station worktree create --repo <path> [--branch <label>]` | 为单个任务准备隔离工作树 + `station/job-*` 分支 | 建 worktree 与分支；**不执行任何命令** | 0 / 2 |
 | `station worktree list` | 列出已准备的任务工作区（id / 分支 / 基线 / 仓库） | 否 | 0 |
 | `station worktree remove <id> [--force]` | 移除工作树与分支；有未提交改动时拒绝 | 删目录与分支 | 0 / 2 |
+| `station worktree run <id> --task <name>` | 在工作区内执行 `agent.tasks` 里**已登记**的命令 | 执行外部命令；写日志 | 0 / 1 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
 | `station version` | 打印版本 | 否 | 0 |
 | `station help` | 打印用法 | 否 | 0 |
@@ -174,6 +175,8 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `notifications.bark.secretRef` | 钥匙串条目名 | 同上 |
 | `remoteAccess.ports` | 1–65535 整数数组 | 启用远程访问时必须非空 |
 | `agent.enabled` | 布尔 | 默认 `false`；打开后 `doctor`/`plan` 都会标出"执行器未实现" |
+| `agent.tasks` | `{名称: [argv...]}` | **只有这里登记的命令能被执行**；示例 `{"test":["npm","test"]}`；不经过 shell |
+| `agent.taskTimeoutSeconds` | 1–3600 | 单任务超时，默认 600；超时按进程组 SIGKILL |
 | `capabilities.enabled` | 能力 id 数组 | 决定 `status` 探测哪些；重复 id 会被校验拒绝 |
 
 **为什么用 JSON 而不是 YAML**：YAML 需要解析器，会破坏"零依赖"这条最有价值的性质。配置本身不复杂，注释写在本文档与 schema 里。
@@ -247,6 +250,7 @@ src/notify.js             去重/限速/分片/审计 + 连接器分派
 src/connectors/qq.js      QQ 官方机器人出站（token 只在内存）
 src/remote.js             tailscale serve 发布（只发明确列出的端口）
 src/worktree.js           隔离工作树与任务记录（M4.1，不执行代码）
+src/jobrun.js             白名单任务的受控执行（M4.2，超时 + 环境剥离）
 capabilities/*.json       自带能力示例
 profiles/*.json           机器 profile
 schema/station.schema.json 配置契约
@@ -261,7 +265,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 110 个用例，零依赖
+npm test                          # 121 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -303,7 +307,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
 | **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 校验、M3.2 bark、M3.3 QQ 出站、M3.5 Tailscale 发布已合并；**M3.4 QQ 入站暂缓**（见 [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) D1） |
-| **M4** | Agent 任务执行 | 🚧 M4.1（隔离工作区 + 任务记录）已合并；M4.2 受控命令、M4.3 改码、M4.4 Draft PR 待做 |
+| **M4** | Agent 任务执行 | 🚧 M4.1 隔离工作区、M4.2 受控任务执行已合并；M4.3 改码、M4.4 Draft PR 待做 |
 | **M5** | GitHub CI/PR 集成：默认只开 Draft PR，人工合并后才允许发布 | 计划 |
 
 后续里程碑都遵守同一条底线：**任何"会改变系统"的动作都必须先 `plan` 再 `apply`，并且可回滚。**
