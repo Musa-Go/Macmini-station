@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.7.0` · M0/M1/M2/M2.1/M3.1/M3.2/M3.3 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.8.0` · M0/M1/M2/M2.1/M3.1/M3.2/M3.3/M3.5 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > 连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
@@ -78,6 +78,7 @@ node bin/station.js backup restore --into /tmp/drill   # 恢复演练
 | `station backup check` | `restic check` 校验仓库结构 | 否 | 0 / 2 |
 | `station backup restore --into <dir>` | 恢复最新快照到指定目录（恢复演练） | 只写目标目录 | 0 / 2 |
 | `station notify --title <t> --body <b> [--dry-run]` | 通过已配置的连接器投递（bark / QQ 出站） | 出站 HTTPS；写审计日志 | 0 / 2 |
+| `station expose [--dry-run] [--off]` | 用 `tailscale serve` 把 `remoteAccess.ports` 发布到 tailnet | 改 Tailscale serve 配置；不开防火墙、不碰公网 | 0 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
 | `station version` | 打印版本 | 否 | 0 |
 | `station help` | 打印用法 | 否 | 0 |
@@ -241,6 +242,7 @@ src/state.js              apply 日志（.station/journal）读写
 src/backup.js             restic 检测与 backup / check / restore
 src/notify.js             去重/限速/分片/审计 + 连接器分派
 src/connectors/qq.js      QQ 官方机器人出站（token 只在内存）
+src/remote.js             tailscale serve 发布（只发明确列出的端口）
 capabilities/*.json       自带能力示例
 profiles/*.json           机器 profile
 schema/station.schema.json 配置契约
@@ -255,7 +257,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 89 个用例，零依赖
+npm test                          # 99 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -296,7 +298,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
 | **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 检测与封装、`backup`/`check`/`restore` | ✅ 已合并（本地/USB 路径；NAS 走已挂载路径） |
-| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 校验、M3.2 bark、M3.3 QQ 出站已合并；QQ 入站与 Tailscale 待做 |
+| **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 🚧 M3.1 校验、M3.2 bark、M3.3 QQ 出站、M3.5 Tailscale 发布已合并；**M3.4 QQ 入站暂缓**（见 [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) D1） |
 | **M4** | Agent 任务执行：独立 worktree、repo allowlist、预算与时限、测试门槛 | 计划 |
 | **M5** | GitHub CI/PR 集成：默认只开 Draft PR，人工合并后才允许发布 | 计划 |
 
@@ -309,6 +311,8 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 设计契约见 [`docs/CONNECTORS.md`](docs/CONNECTORS.md)。当前状态：**bark 与 QQ 出站均已可真实投递**；`qq` 入站指令与 `tailscale` 端口发布待做。
 
 **凭据由使用者自己填**：仓库里没有、也不会内置任何 QQ AppID 或密钥。
+
+远程访问同理：`station expose` 只发布 `remoteAccess.ports` 里**明确列出**的端口，该数组默认空，因此默认一个端口都不发。Tailscale 的登录态由 Tailscale 自己持有，本工具不接触凭据。
 
 ```bash
 # 把密钥存进钥匙串（只存一次，配置里只写引用名）
@@ -372,6 +376,7 @@ station notify --title "构建完成" --body "M3.3 已合并" --dry-run
 
 - [`LICENSE`](LICENSE) — MIT
 - [`docs/CONNECTORS.md`](docs/CONNECTORS.md) — M3 连接器设计契约
+- [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) — 刻意留给后续判断的决策（QQ 入站形态等）
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发流程、提交规范、README 规则
 - [`schema/station.schema.json`](schema/station.schema.json) — 配置契约
 - 设计背景：工作站规划文档（私有仓库外的笔记，不在本仓库内）
