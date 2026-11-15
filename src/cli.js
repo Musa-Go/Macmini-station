@@ -11,6 +11,7 @@ import { loadCapabilities, probeCapabilities, formatCapabilityTable } from './ca
 import { buildPlan, formatPlan } from './plan.js'
 import { backup, check, findRestic, restore, INSTALL_HINT } from './backup.js'
 import { describeNotify, notify } from './notify.js'
+import { describeExpose, expose } from './remote.js'
 import {
   apply,
   describeApply,
@@ -46,7 +47,9 @@ Usage:
   station backup restore --into <dir> [--json]
                                  Restore the latest snapshot into a directory (recovery drill)
   station notify --title <t> --body <b> [--dry-run] [--json]
-                                 Deliver through the configured connector (bark in M3.2)
+                                 Deliver through the configured connector (bark or QQ)
+  station expose [--dry-run] [--off] [--json]
+                                 Publish remoteAccess.ports on the tailnet via tailscale serve
   station init [--force]         Write a default station.json
   station version                Print version
   station help                   Show this help
@@ -187,6 +190,14 @@ export async function main(argv, io) {
         })
         if (json) out(`${JSON.stringify(result, null, 2)}\n`)
         else out(`${describeNotify(result)}\n`)
+        return result.ok ? EXIT_OK : EXIT_FAIL
+      }
+
+      case 'expose': {
+        const config = loadConfig({ cwd: io.cwd })
+        const result = expose({ config, dryRun: flags.has('dry-run'), off: flags.has('off') })
+        if (json) out(`${JSON.stringify(result, null, 2)}\n`)
+        else out(`${describeExpose(result)}\n`)
         return result.ok ? EXIT_OK : EXIT_FAIL
       }
 
