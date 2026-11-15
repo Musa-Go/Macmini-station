@@ -9,7 +9,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { stateDir } from './state.js'
@@ -167,11 +167,20 @@ export function assertTrustedJob({ cwd, job, gitImpl = git }) {
 
   const list = gitImpl(record.repo, ['worktree', 'list', '--porcelain'], { allowFailure: true })
   if (!list.ok) throw new Error(`cannot inspect worktrees of ${record.repo}: ${list.error ?? 'git failed'}`)
+  // git reports resolved paths (/private/var) while callers may hold the
+  // symlinked form (/var); compare real paths so the check is not fooled.
+  const normalize = (value) => {
+    try {
+      return realpathSync(value)
+    } catch {
+      return resolve(value)
+    }
+  }
   const registered = list.stdout
     .split('\n')
     .filter((line) => line.startsWith('worktree '))
-    .map((line) => resolve(line.slice('worktree '.length).trim()))
-  if (!registered.includes(resolve(storedPath))) {
+    .map((line) => normalize(line.slice('worktree '.length).trim()))
+  if (!registered.includes(normalize(storedPath))) {
     throw new Error(`worktree path is not registered with git: ${storedPath}`)
   }
 

@@ -122,11 +122,13 @@ export function repositoryPath({ config, cwd }) {
  * from argv and never from this process's environment.
  */
 export function backup({ cwd, config, env = process.env, dryRun = false, resticBin, exec = execFileSync }) {
-  const restic = resticBin ?? findRestic({ env })
-  if (!restic.ok) return { ok: false, stage: 'restic', ...restic }
-
+  // Validate the target first: a misconfigured target must fail closed even on a
+  // machine without restic, instead of masking itself as a missing binary.
   const repo = repositoryPath({ config, cwd })
   if (!repo.ok) return { ok: false, stage: 'target', ...repo }
+
+  const restic = resticBin ?? findRestic({ env })
+  if (!restic.ok) return { ok: false, stage: 'restic', ...restic }
 
   const passwordFile = env.RESTIC_PASSWORD_FILE
   if (!passwordFile) {
@@ -186,10 +188,10 @@ export function backup({ cwd, config, env = process.env, dryRun = false, resticB
 
 /** `restic check`: proves the repository is structurally readable. */
 export function check({ cwd, config, env = process.env, resticBin, exec = execFileSync }) {
-  const restic = resticBin ?? findRestic({ env })
-  if (!restic.ok) return { ok: false, stage: 'restic', ...restic }
   const repo = repositoryPath({ config, cwd })
   if (!repo.ok) return { ok: false, stage: 'target', ...repo }
+  const restic = resticBin ?? findRestic({ env })
+  if (!restic.ok) return { ok: false, stage: 'restic', ...restic }
   if (!existsSync(repo.repo)) return { ok: false, stage: 'repo', error: `no repository at ${repo.repo}; run \`station backup\` first` }
   if (!env.RESTIC_PASSWORD_FILE) return { ok: false, stage: 'password', error: 'RESTIC_PASSWORD_FILE is not set' }
   const permissions = checkPasswordFile(env.RESTIC_PASSWORD_FILE)
@@ -207,10 +209,10 @@ export function check({ cwd, config, env = process.env, resticBin, exec = execFi
 
 /** Restore the latest snapshot into a directory for a real recovery drill. */
 export function restore({ cwd, config, env = process.env, into, resticBin, exec = execFileSync }) {
-  const restic = resticBin ?? findRestic({ env })
-  if (!restic.ok) return { ok: false, stage: 'restic', ...restic }
   const repo = repositoryPath({ config, cwd })
   if (!repo.ok) return { ok: false, stage: 'target', ...repo }
+  const restic = resticBin ?? findRestic({ env })
+  if (!restic.ok) return { ok: false, stage: 'restic', ...restic }
   if (!into) return { ok: false, stage: 'arguments', error: 'restore needs --into <directory>' }
   if (!existsSync(repo.repo)) return { ok: false, stage: 'repo', error: `no repository at ${repo.repo}` }
   if (!env.RESTIC_PASSWORD_FILE) return { ok: false, stage: 'password', error: 'RESTIC_PASSWORD_FILE is not set' }

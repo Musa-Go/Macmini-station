@@ -84,7 +84,7 @@ export function serveCommands(ports, { reset = false } = {}) {
 /**
  * Publish or unpublish the configured ports. Returns a structured result.
  */
-export function expose({ cwd, config, dryRun = false, off = false, probe = defaultProbe }) {
+export function expose({ cwd, config, dryRun = false, off = false, probe = defaultProbe, exists = existsSync }) {
   const remote = config.remoteAccess ?? {}
   const enabled = remote.enabled === true
   const wanted = Array.isArray(remote.ports) ? remote.ports.filter((port) => Number.isInteger(port) && port > 0) : []
@@ -119,7 +119,7 @@ export function expose({ cwd, config, dryRun = false, off = false, probe = defau
     toOff = published.filter((port) => !wanted.includes(port))
   }
 
-  const tailscale = findTailscale({ probe })
+  const tailscale = findTailscale({ probe, exists })
   if (!tailscale.ok) return { ok: false, stage: 'tailscale', ...tailscale }
 
   const online = tailnetOnline({ path: tailscale.path, probe })

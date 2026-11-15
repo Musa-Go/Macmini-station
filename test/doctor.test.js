@@ -20,7 +20,20 @@ test('doctor returns a stable set of checks with valid statuses', () => {
     const ids = checks.map((c) => c.id).sort()
     assert.deepEqual(
       ids,
-      ['agent', 'backup', 'config', 'docker', 'git', 'node', 'notifications', 'platform', 'profile', 'remote', 'restic'].sort(),
+      [
+        'agent',
+        'agent-isolation',
+        'backup',
+        'config',
+        'docker',
+        'git',
+        'node',
+        'notifications',
+        'platform',
+        'profile',
+        'remote',
+        'restic',
+      ].sort(),
     )
     for (const check of checks) {
       assert.ok(['ok', 'warn', 'critical', 'unknown'].includes(check.status), `bad status: ${check.status}`)

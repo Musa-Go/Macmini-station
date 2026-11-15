@@ -295,6 +295,13 @@
               "description": "defaults to true"
             }
           }
+        },
+        "isolation": {
+          "enum": [
+            "none",
+            "dedicated-user"
+          ],
+          "description": "\"dedicated-user\" declares that agent commands are run under a separate macOS account (see docs/ISOLATION.md)"
         }
       }
     },
