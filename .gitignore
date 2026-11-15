@@ -1,0 +1,7 @@
+node_modules/
+station.json
+.capabilities/
+.DS_Store
+*.log
+doctor.json
+plan.json

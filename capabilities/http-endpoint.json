@@ -1,0 +1,18 @@
+{
+  "id": "http-endpoint",
+  "title": "HTTP endpoint",
+  "summary": "Template capability for probing a local HTTP service. Copy it into ./capabilities and set probe.url to your own service.",
+  "kind": "http",
+  "optional": true,
+  "probe": {
+    "url": "http://127.0.0.1:9/health",
+    "expect": [200],
+    "timeoutMs": 2000
+  },
+  "data": [],
+  "permissions": ["network: loopback only"],
+  "notes": [
+    "The shipped URL is a deliberately closed port, so a template probe reports a visible failure instead of a false success.",
+    "Services must bind loopback unless the user explicitly enables remoteAccess."
+  ]
+}

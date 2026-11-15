@@ -1,0 +1,27 @@
+{
+  "name": "macmini-station",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first Mac mini workstation toolkit: installable profiles, capability registry, health probes and optional integrations (NAS, Tailscale, QQ, agents).",
+  "type": "module",
+  "bin": {
+    "station": "bin/station.js"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "doctor": "node bin/station.js doctor",
+    "status": "node bin/station.js status",
+    "plan": "node bin/station.js plan"
+  },
+  "files": [
+    "bin",
+    "src",
+    "capabilities",
+    "profiles",
+    "schema"
+  ],
+  "license": "UNLICENSED"
+}
