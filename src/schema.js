@@ -225,6 +225,9 @@ export function validateConfig(config) {
       }
     }
   }
+  if (isPlainObject(agentTaskCfg) && agentTaskCfg.isolation !== undefined) {
+    requireEnum(problems, agentTaskCfg.isolation, ['none', 'dedicated-user'], 'agent.isolation')
+  }
   if (isPlainObject(agentTaskCfg) && agentTaskCfg.gate !== undefined) {
     const gate = agentTaskCfg.gate
     if (!isPlainObject(gate)) push(problems, 'agent.gate', 'must be an object like {"task": "test", "required": true}')

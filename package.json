@@ -1,6 +1,6 @@
 {
   "name": "macmini-station",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "description": "Local-first Mac mini workstation toolkit: installable profiles, capability registry, health probes and optional integrations (NAS, Tailscale, QQ, agents).",
   "type": "module",
@@ -18,14 +18,18 @@
     "apply": "node bin/station.js apply --dry-run",
     "verify": "node bin/station.js verify",
     "backup": "node bin/station.js backup --dry-run",
-    "notify": "node bin/station.js notify --title test --body hello --dry-run"
+    "notify": "node bin/station.js notify --title test --body hello --dry-run",
+    "drill": "node scripts/drill.mjs",
+    "drill:json": "node scripts/drill.mjs --json"
   },
   "files": [
     "bin",
-    "src",
     "capabilities",
+    "docs",
     "profiles",
     "schema",
+    "scripts",
+    "src",
     "templates"
   ],
   "license": "MIT"

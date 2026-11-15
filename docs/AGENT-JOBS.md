@@ -83,6 +83,16 @@ job 记录是本地可编辑文件，所以它被当作**不可信输入**处理
 
 任务与 agent 以你的用户身份执行，worktree 只隔离**git 历史**，不隔离文件系统与网络。设计上不宣称机器级安全；需要强隔离时应把它们放进独立账号或虚拟机。
 
+可执行的加固路径见 [ISOLATION.md](ISOLATION.md)：创建 `station-agent` 账号、把仓库放到共享目录、用 `sudo -u station-agent env HOME=...` 运行、在配置里声明 `agent.isolation`。`doctor` 会核对**当前进程用户**是否真的与配置属主不同，而不是只看声明。
+
+## 4.5 演练
+
+```bash
+npm run drill
+```
+
+它在一堆临时目录里重演这些保证：门槛拦截、旧门槛失效、伪造 journal 被拒、签名 journal 无法越界、记录篡改无法写进 `main`、端口对账、不支持的目标 fail closed、口令文件权限。CI 每次也会跑。
+
 ## 5. 明确不做（M4.1–M4.4 都不做）
 
 - 不自动合并、不自动发布

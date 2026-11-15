@@ -33,6 +33,12 @@ jobs:
           "
       - name: Run tests
         run: npm test
+      - name: Hardening drill
+        # Behavioural check of the guarantees from the security review: the gate,
+        # journal signatures, record trust, port reconciliation and fail-closed
+        # backup paths. Runs offline in temp directories.
+        run: npm run drill
+
       - name: Smoke the CLI
         # doctor exits 1 when it reports warnings and 2 for real failures, so the
         # smoke step asserts the contract instead of demanding exit 0.

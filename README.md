@@ -4,7 +4,7 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.13.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> **状态**：`0.14.0` · M0–M5 全部里程碑已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` / `backup` 可用并受 CI 保护（Node 20 / 22 / 24）。
 > M4.1–M4.4 已合并：隔离工作区、受控任务执行、Agent 命令执行、提交/推送/Draft PR。M5 提供 CI 与 PR 模板，但**不往你的仓库写 workflow**。工具不实现 agent 循环，也不自动合并。
 
 ---
@@ -184,6 +184,7 @@ ok 8 · warn 2 · critical 0 · unknown 0
 | `agent.taskTimeoutSeconds` | 1–3600 | 单任务超时，默认 600；超时按进程组 SIGKILL |
 | `agent.gate.task` | `agent.tasks` 里的任务名 | **测试门槛**：配置后，`commit`/`push` 必须有一次针对**当前工作树内容**的通过记录 |
 | `agent.gate.required` | 布尔，默认 `true`（当 `gate` 存在时） | 设为 `false` 可仅告警不拦截 |
+| `agent.isolation` | `none` · `dedicated-user` | 声明 agent 是否运行在独立 macOS 账号下；`doctor` 会核对**实际**用户而不是只看声明 |
 | `capabilities.enabled` | 能力 id 数组 | 决定 `status` 探测哪些；重复 id 会被校验拒绝 |
 
 **为什么用 JSON 而不是 YAML**：YAML 需要解析器，会破坏"零依赖"这条最有价值的性质。配置本身不复杂，注释写在本文档与 schema 里。
@@ -259,6 +260,7 @@ src/remote.js             tailscale serve 发布（只发明确列出的端口�
 src/worktree.js           隔离工作树与任务记录（M4.1，不执行代码）
 src/jobrun.js             受控执行器（M4.2 任务 / M4.3 agent 命令，超时 + 环境剥离）
 src/publish.js            提交 / 推送 / Draft PR（只允许 station/job-* 分支）
+scripts/drill.mjs         安全行为演练（npm run drill，CI 也跑）
 capabilities/*.json       自带能力示例
 profiles/*.json           机器 profile
 schema/station.schema.json 配置契约
@@ -274,14 +276,18 @@ test/*.test.js            node:test 用例
 
 ```bash
 npm test                          # 159 个用例，零依赖
+npm run drill                     # 9 项安全行为演练（gate / journal / 记录信任 / 端口对账 / fail-closed）
 node bin/station.js doctor        # 手动冒烟
 ```
+
+`npm run drill` 是给运维用的：它在一堆临时目录里重演安全审查发现的那几条保证——测试门槛拦不拦得住、伪造 journal 会不会被拒、被改的记录能不能写进 `main`、删掉的端口会不会被撤销、不支持的备份目标是否 fail closed。CI 里也跑同一套。
 
 CI（`.github/workflows/ci.yml`）做三件事：
 
 1. **禁止运行时依赖**：`package.json` 的 `dependencies` 非空即失败；
 2. **Node 20 / 22 / 24 矩阵**跑测试；
-3. **CLI 冒烟**：`doctor --json`、`plan --json` 结构正确且退出码不超过 1；`backup --dry-run --json` 必须"要么成功、要么 fail closed 且带 restic 相关的 stage"。
+3. **安全演练**：`npm run drill` 重演审查修复后的关键保证；
+4. **CLI 冒烟**：`doctor --json`、`plan --json` 结构正确且退出码不超过 1；`backup --dry-run --json` 必须"要么成功、要么 fail closed 且带 restic 相关的 stage"。
 
 合并流程与 README 维护要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
@@ -379,6 +385,10 @@ station notify --title "构建完成" --body "M3.3 已合并" --dry-run
 - `commit`/`push`/`pr` 前会核对 job 记录与 git 实际 worktree、分支是否一致，**记录被篡改会导致拒绝执行而不是写进 `main`**。
 - 发布前若配置了 `agent.gate.task`，必须有针对当前工作树内容的通过记录。
 
+**隔离方案**
+
+以专用低权限账号运行 agent 的完整步骤（账号创建、目录权限、`HOME` 处理、launchd）见 [`docs/ISOLATION.md`](docs/ISOLATION.md)。要点：这是**权限收敛**，不是沙箱；网络与同机可读文件仍未隔离。
+
 **不在能力范围内（重要）**
 
 - **M4 的 worktree 不是操作系统级沙箱**。任务与 agent 以你自己的用户身份运行，能访问你的家目录、网络和本机一切该用户可访问的资源。它只保证"改动发生在独立 git 工作树里"，不保证"进程被限制在工作树里"。
@@ -404,6 +414,7 @@ station notify --title "构建完成" --body "M3.3 已合并" --dry-run
 - [`LICENSE`](LICENSE) — MIT
 - [`docs/CONNECTORS.md`](docs/CONNECTORS.md) — M3 连接器设计契约
 - [`templates/README.md`](templates/README.md) — CI 与 PR 模板（复制到你自己的项目）
+- [`docs/ISOLATION.md`](docs/ISOLATION.md) — 用专用账号运行 agent 的加固方案与局限
 - [`docs/AGENT-JOBS.md`](docs/AGENT-JOBS.md) — M4 任务契约（隔离、预算、门槛、禁止直推）
 - [`docs/DECISIONS-PENDING.md`](docs/DECISIONS-PENDING.md) — 刻意留给后续判断的决策（QQ 入站形态等）
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发流程、提交规范、README 规则

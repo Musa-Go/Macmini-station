@@ -6,9 +6,9 @@
  * services; the command is safe to run at any time.
  */
 
-import { existsSync } from 'node:fs'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { userInfo } from 'node:os'
 import { defaultConfig, loadConfig, configPath } from './config.js'
 import { run, mountProbe, expandHome } from './probes.js'
 import { findRestic } from './backup.js'
@@ -30,6 +30,7 @@ export function runDoctor({ cwd, env = process.env, root }) {
   checks.push(checkRemoteAccess({ config }))
   checks.push(checkNotifications({ config }))
   checks.push(checkAgent({ config }))
+  checks.push(checkAgentIsolation({ config, cwd }))
 
   checks.push(checkGit())
   checks.push(checkDocker())
@@ -234,6 +235,60 @@ function checkAgent({ config }) {
     status: 'warn',
     detail: `enabled for ${dir || '(unset)'}, runner not implemented in 0.1`,
     fix: 'leave agent.enabled false until the isolated worktree runner exists',
+  }
+}
+
+/**
+ * Report the real isolation situation instead of the intended one: the claim in
+ * the config is compared with the process that is actually running.
+ */
+function checkAgentIsolation({ config, cwd }) {
+  const agent = config.agent ?? {}
+  if (!agent.enabled) {
+    return { id: 'agent-isolation', title: 'Agent isolation', status: 'ok', detail: 'agent jobs disabled' }
+  }
+  const username = (() => {
+    try {
+      return userInfo().username
+    } catch {
+      return process.env.USER ?? 'unknown'
+    }
+  })()
+  const declared = agent.isolation === 'dedicated-user' ? 'dedicated-user' : 'none'
+
+  let configOwner = null
+  try {
+    const info = statSync(join(cwd, 'station.json'))
+    configOwner = info.uid
+  } catch {
+    configOwner = null
+  }
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null
+  const differentUser = configOwner !== null && uid !== null && configOwner !== uid
+
+  if (declared === 'none') {
+    return {
+      id: 'agent-isolation',
+      title: 'Agent isolation',
+      status: 'warn',
+      detail: `tasks run as ${username} with full access to this account's files`,
+      fix: 'worktrees are git-level isolation, not an OS sandbox; see docs/ISOLATION.md before running untrusted code',
+    }
+  }
+  if (declared === 'dedicated-user' && differentUser) {
+    return {
+      id: 'agent-isolation',
+      title: 'Agent isolation',
+      status: 'ok',
+      detail: `running as ${username}, station.json is owned by another user`,
+    }
+  }
+  return {
+    id: 'agent-isolation',
+    title: 'Agent isolation',
+    status: 'warn',
+    detail: `agent.isolation is "dedicated-user" but this process runs as the config owner (${username})`,
+    fix: 'run the command under the dedicated account, e.g. `sudo -u station-agent env HOME=... node ...`',
   }
 }
 
