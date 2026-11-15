@@ -4,8 +4,8 @@
 
 把一台 Mac mini 上验证过的**工作站能力**，整理成能在别的机器上安装、检查、备份、逐步扩展的本地优先工具。
 
-> **状态**：`0.1.0` · M0 已合并。`doctor` / `status` / `plan` / `init` 可用并受 CI 保护（Node 20 / 22 / 24）。
-> 安装执行（`apply`）、备份执行、连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
+> **状态**：`0.2.0` · M0/M1 已合并。`doctor` / `status` / `plan` / `init` / `apply` / `verify` / `rollback` 可用并受 CI 保护（Node 20 / 22 / 24）。
+> 备份执行、连接器与 Agent 执行仍在路线图上，见 [路线图](#路线图)。
 
 ---
 
@@ -47,6 +47,10 @@ node bin/station.js doctor        # 这台机器能不能跑，缺什么
 node bin/station.js init          # 写出 station.json（已存在则不覆盖）
 node bin/station.js plan          # 当前配置会做什么，只读
 node bin/station.js status        # 探测已注册能力
+node bin/station.js apply --dry-run   # 看 apply 会创建什么
+node bin/station.js apply             # 创建目录 + 写日志（不启动任何服务）
+node bin/station.js verify            # 复核已应用状态与配置漂移
+node bin/station.js rollback          # 只删除上次 apply 创建的东西
 ```
 
 要求：**Node.js ≥ 20.11**。Apple Silicon macOS 是一等目标；Intel Mac 与其它平台会显式报告为 best-effort。
@@ -60,6 +64,9 @@ node bin/station.js status        # 探测已注册能力
 | `station doctor` | 检查 Node、平台、配置文件、备份目标、远程访问、通知、Agent、git、容器运行时、profile | 否 | 0 / 1 / 2 |
 | `station status` | 按能力清单逐项探测，输出 `ok`/`warn`/`critical`/`unknown` | 否 | 0 / 1 / 2 |
 | `station plan` | 列出当前 profile 将要配置哪些能力，以及各自前置条件 | 否 | 0 |
+| `station apply [--dry-run]` | 创建 `.station/` 与备份目标目录，写入 apply 日志 | **只建目录、写日志**；不生成 plist、不启动服务 | 0 / 2 |
+| `station verify` | 复核配置有效性、目录存在性、日志一致性、配置漂移 | 否 | 0 / 1 |
+| `station rollback [--to <id>] [--dry-run]` | 只删除某次 apply 记录为"由它创建"的路径 | 删除空目录 / 未改动的文件 | 0 / 2 |
 | `station init` | 生成默认 `station.json`；已存在时保留，除非 `--force` | 只写一个配置文件 | 0 / 2 |
 | `station version` | 打印版本 | 否 | 0 |
 | `station help` | 打印用法 | 否 | 0 |
@@ -67,6 +74,17 @@ node bin/station.js status        # 探测已注册能力
 所有命令都支持 `--json`，输出是稳定的机器可读结构，可直接喂给面板、告警或 QQ 机器人。
 
 **退出码约定**：`0` 全部正常 · `1` 存在告警（工具仍可用）· `2` 存在严重问题或参数错误。CI 里的冒烟步骤就按这个契约断言，而不是要求 `0`。
+
+### apply / verify / rollback 的边界
+
+| 问题 | 行为 |
+|---|---|
+| 会创建 launchd plist 或启动服务吗 | **不会**。`apply` 只 `mkdir` 与写 `.station/journal/`；服务注册属于后续独立命令 |
+| 幂等吗 | 是。已存在的路径只报告，不算新建 |
+| 备份目录不存在会创建吗 | 是，但仅当 `target.type` 为 `local` / `external-disk` |
+| 回滚会删我的数据吗 | 不会。只删"由它创建"的路径，且目录必须为空、文件必须未被改动 |
+| 日志会留在哪 | `<cwd>/.station/journal/<id>.json`，回滚记录为 `<id>.rollback.json`；该目录受保护，回滚不删除 |
+| 配置改过怎么办 | `verify` 报 `config-drift`，提示重新 `apply` |
 
 ### 示例输出
 
@@ -192,6 +210,8 @@ src/doctor.js             doctor 的 10 项检查
 src/capabilities.js       能力清单加载、校验、探测调度
 src/probes.js             http / path / mount / file-freshness 探针
 src/plan.js               只读规划
+src/apply.js              apply / verify / rollback
+src/state.js              apply 日志（.station/journal）读写
 capabilities/*.json       自带能力示例
 profiles/*.json           机器 profile
 schema/station.schema.json 配置契约
@@ -206,7 +226,7 @@ test/*.test.js            node:test 用例
 ## 9. 开发
 
 ```bash
-npm test                          # 37 个用例，零依赖
+npm test                          # 47 个用例，零依赖
 node bin/station.js doctor        # 手动冒烟
 ```
 
@@ -231,6 +251,7 @@ CI（`.github/workflows/ci.yml`）做三件事：
 | 新增探测类型或能力字段 | 第 6 节探测类型表 |
 | 新增 profile 或支持平台 | 第 7 节 |
 | 增加/移动模块 | 第 8 节目录结构 |
+| 改变 `apply`/`verify`/`rollback` 的行为或日志格式 | 第 4 节「边界」小节、第 11 节 |
 | 改变开发流程或 CI 规则 | 第 9 节 |
 | 完成一个里程碑 | 第 11 节路线图状态、顶部状态行 |
 | 改变安全边界或许可证 | 第 12 节、第 13 节 |
@@ -244,7 +265,7 @@ PR 模板里有对应勾选项；合并者应在合并前逐项确认。**README
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | **M0** | CLI 骨架、`station.json` schema、能力清单、`doctor`/`status`/`plan`/`init` | ✅ 已合并（`452848e`） |
-| **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ⏳ 进行中 |
+| **M1** | `apply`（只创建目录/写配置/校验，不启动服务）、`verify`、`rollback` | ✅ 已合并 |
 | **M2** | 备份执行：restic 封装、local/USB/NAS 适配器、`check`、恢复演练 | 计划 |
 | **M3** | 连接器：Tailscale、QQ、Bark，全部 opt-in，密钥走系统钥匙串 | 计划 |
 | **M4** | Agent 任务执行：独立 worktree、repo allowlist、预算与时限、测试门槛 | 计划 |
